@@ -505,7 +505,13 @@ def keys_create(alias: str, monthly_limit: float | None, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(data, indent=2))
         return
-    _out.print(f"✓ Created key [bold]{data.get('alias')}[/bold]")
+    # Echo the monthly cap back on success — otherwise the user has no local
+    # confirmation that `--monthly-limit` actually applied, and must re-run
+    # `qsp keys list` to verify. For a spend-safety feature, visible confirmation
+    # matters.
+    lim = data.get("monthly_limit")
+    cap_str = f" · [cyan]${lim:.4f}/30d[/cyan] monthly cap" if isinstance(lim, (int, float)) and lim else ""
+    _out.print(f"✓ Created key [bold]{data.get('alias')}[/bold]{cap_str}")
     _out.print(f"  {data.get('key')}")
     _out.print("[yellow]Copy it now — it won't be shown again.[/yellow]")
 

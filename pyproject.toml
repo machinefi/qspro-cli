@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quicksilverpro"
-version = "0.1.1"
+version = "0.1.2"
 description = "CLI for QuickSilver Pro — OpenAI-compatible API for DeepSeek V3, DeepSeek R1, and Qwen 3.5 at 20% below resellers."
 readme = "README.md"
 requires-python = ">=3.9"
