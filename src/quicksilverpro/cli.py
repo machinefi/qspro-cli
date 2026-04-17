@@ -384,32 +384,63 @@ def _chat_sync(key: str, body: dict, as_json: bool) -> None:
 
 def _chat_stream(key: str, body: dict) -> None:
     last_usage = {}
+    exit_code: int | None = None
+    bad_status: int | None = None
+    bad_body: str | None = None
+    wrote_any = False
     try:
-        with _api_client(key).stream("POST", "/chat/completions", json=body) as r:
-            if r.status_code >= 400:
-                _err.print(f"[red]{_extract_error(r)}[/red]")
-                sys.exit(1)
-            for line in r.iter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                payload = line[5:].strip()
-                if not payload or payload == "[DONE]":
-                    continue
-                try:
-                    ev = json.loads(payload)
-                except Exception:
-                    continue
-                for ch in ev.get("choices") or []:
-                    delta = (ch.get("delta") or {})
-                    if delta.get("content"):
-                        sys.stdout.write(delta["content"])
-                        sys.stdout.flush()
-                if ev.get("usage"):
-                    last_usage = ev["usage"]
+        # Nest the client context so the pool is always closed, even on
+        # exceptions, KeyboardInterrupt, or sys.exit. Deferring sys.exit until
+        # after the client has closed avoids leaking the underlying socket.
+        with _api_client(key) as c:
+            with c.stream("POST", "/chat/completions", json=body) as r:
+                if r.status_code >= 400:
+                    # Read body synchronously so _extract_error can parse it.
+                    bad_status = r.status_code
+                    try:
+                        r.read()
+                        bad_body = _extract_error(r)
+                    except Exception:
+                        bad_body = f"HTTP {r.status_code}"
+                    exit_code = 1
+                else:
+                    for line in r.iter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if not payload or payload == "[DONE]":
+                            continue
+                        try:
+                            ev = json.loads(payload)
+                        except Exception:
+                            continue
+                        for ch in ev.get("choices") or []:
+                            delta = (ch.get("delta") or {})
+                            if delta.get("content"):
+                                sys.stdout.write(delta["content"])
+                                sys.stdout.flush()
+                                wrote_any = True
+                        if ev.get("usage"):
+                            last_usage = ev["usage"]
+    except KeyboardInterrupt:
+        # User ctrl-c'd mid-stream — close gracefully, newline so the prompt
+        # returns on a fresh line, and signal interrupted via exit code.
+        if wrote_any:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        _err.print("[yellow]Interrupted.[/yellow]")
+        sys.exit(130)
     except httpx.HTTPError as e:
         _err.print(f"\n[red]Network error:[/red] {e}")
         sys.exit(1)
-    sys.stdout.write("\n")
+
+    if exit_code is not None:
+        _err.print(f"[red]{bad_body or 'request failed'}[/red]")
+        sys.exit(exit_code)
+
+    if wrote_any:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
     if last_usage.get("cost") is not None:
         _err.print(
             f"[dim]{last_usage.get('prompt_tokens',0)} in + "
@@ -493,6 +524,14 @@ def keys_delete(alias: str, yes: bool) -> None:
     if not matches:
         _err.print(f"[red]No key with alias '{alias}'.[/red]")
         sys.exit(1)
+    if len(matches) > 1:
+        # Aliases aren't globally unique on the backend — picking matches[0] would
+        # silently delete the wrong key. Ask the user to pick by key_name prefix.
+        _err.print(f"[red]Multiple keys have alias '{alias}':[/red]")
+        for m in matches:
+            _err.print(f"  • {m.get('key_name')}  (spend ${m.get('spend') or 0:.4f})")
+        _err.print("[yellow]Delete from the dashboard, or rename one first so aliases are unique.[/yellow]")
+        sys.exit(1)
     target = matches[0]
     if not yes:
         click.confirm(f"Delete key '{alias}' ({target.get('key_name')})?", abort=True)
@@ -507,7 +546,8 @@ def keys_delete(alias: str, yes: bool) -> None:
 # ────────────────────────── qsp usage ──────────────────────────
 
 @main.command(help="Recent API calls with cost.")
-@click.option("-n", "--limit", type=int, default=10, show_default=True)
+@click.option("-n", "--limit", type=click.IntRange(min=0), default=10, show_default=True,
+              help="Max rows in 'recent' table; 0 = hide recent, show totals only.")
 @click.option("--json", "as_json", is_flag=True)
 def usage(limit: int, as_json: bool) -> None:
     key = _require_key()
@@ -595,5 +635,50 @@ def pay(amount: str) -> None:
 
 # ────────────────────────── entrypoint ──────────────────────────
 
+def run() -> None:
+    """Entry point wrapper: invoke the click group with friendly handling for
+    network / transport errors, so `qsp` never tracebacks on a DNS failure or
+    firewall drop. Anything that's not a network error falls back to click's
+    normal behaviour (usage errors, aborts, explicit SystemExit from commands)."""
+    try:
+        main(standalone_mode=False)
+    except httpx.ConnectError:
+        _err.print(
+            f"[red]Can't reach QuickSilver Pro.[/red] "
+            f"Check your internet / firewall, or see [bold]https://quicksilverpro.io/status[/bold]."
+        )
+        sys.exit(1)
+    except httpx.ConnectTimeout:
+        _err.print(
+            f"[red]Connection timed out.[/red] "
+            f"Network is slow or blocking — try again, or check [bold]https://quicksilverpro.io/status[/bold]."
+        )
+        sys.exit(1)
+    except httpx.ReadTimeout:
+        _err.print(
+            f"[red]Request timed out waiting for a response.[/red] "
+            f"The model may be cold — retry, or try a different model."
+        )
+        sys.exit(1)
+    except httpx.HTTPError as e:
+        # Catches WriteError, RemoteProtocolError, etc. — anything network-adjacent
+        # that escaped the per-request handlers. Keep the message short; full repr
+        # is often noisy and unhelpful to end users.
+        _err.print(f"[red]Network error:[/red] {type(e).__name__}: {e}")
+        sys.exit(1)
+    except click.UsageError as e:
+        e.show()
+        sys.exit(e.exit_code)
+    except click.ClickException as e:
+        e.show()
+        sys.exit(e.exit_code)
+    except click.Abort:
+        _err.print("[dim]Aborted.[/dim]")
+        sys.exit(130)
+    except KeyboardInterrupt:
+        # Ctrl-C outside of a handled streaming loop. Exit 130 = canonical SIGINT.
+        sys.exit(130)
+
+
 if __name__ == "__main__":
-    main()
+    run()
