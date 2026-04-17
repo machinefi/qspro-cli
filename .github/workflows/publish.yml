@@ -1,25 +1,92 @@
-name: Publish to PyPI
+name: Publish to PyPI & Homebrew
 
-# Triggered when a version tag like v0.1.0 is pushed. Uses PyPI Trusted
-# Publishing (no tokens stored) — configure the project's publisher on
-# pypi.org to match `machinefi/qspro-cli` + workflow `publish.yml`.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
+
+permissions:
+  id-token: write   # Trusted Publishing (no long-lived PyPI token)
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write   # needed for Trusted Publishing
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Build
+
+      - name: Install build tools
         run: |
-          python -m pip install --upgrade pip build
-          python -m build
-      - name: Publish
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  update-homebrew:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for PyPI to propagate
+        run: sleep 30
+
+      - name: Resolve release version
+        id: version
+        # GITHUB_REF_NAME is e.g. "v0.1.0"; strip the leading "v" for PyPI.
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch sdist URL and SHA256 from PyPI
+        id: pypi
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          URL=""
+          # Poll up to ~5 minutes for the new version to show on PyPI.
+          for i in $(seq 1 10); do
+            URL=$(curl -fsSL "https://pypi.org/pypi/quicksilverpro/${VERSION}/json" 2>/dev/null \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print([u['url'] for u in d['urls'] if u['packagetype']=='sdist'][0])" 2>/dev/null) && break
+            echo "Waiting for PyPI... (attempt $i)"
+            sleep 30
+          done
+          if [ -z "$URL" ]; then echo "Timed out waiting for PyPI sdist"; exit 1; fi
+
+          curl -fsSL "$URL" -o /tmp/pkg.tar.gz
+          SHA256=$(sha256sum /tmp/pkg.tar.gz | cut -d' ' -f1)
+          rm /tmp/pkg.tar.gz
+
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "Resolved: $URL (sha256: $SHA256)"
+
+      - name: Dispatch formula update to homebrew tap
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: machinefi/homebrew-qspro
+          event-type: update-formula
+          client-payload: |
+            {
+              "version": "${{ steps.version.outputs.version }}",
+              "url": "${{ steps.pypi.outputs.url }}",
+              "sha256": "${{ steps.pypi.outputs.sha256 }}"
+            }
