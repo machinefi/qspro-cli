@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quicksilverpro"
+version = "0.1.0"
+description = "CLI for QuickSilver Pro — OpenAI-compatible API for DeepSeek V3, DeepSeek R1, and Qwen 3.5 at 20% below resellers."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "MachineFi Inc.", email = "hello@quicksilverpro.io" }]
+keywords = [
+  "openai", "deepseek", "qwen", "llm", "inference", "api",
+  "chatgpt", "ai", "cli", "openrouter-alternative", "quicksilverpro",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Utilities",
+]
+dependencies = [
+  "click>=8.1",
+  "httpx>=0.25",
+  "rich>=13",
+]
+
+[project.urls]
+Homepage     = "https://quicksilverpro.io"
+Documentation = "https://quicksilverpro.io/dashboard#quickstart"
+Repository   = "https://github.com/machinefi/qspro-cli"
+Issues       = "https://github.com/machinefi/qspro-cli/issues"
+Status       = "https://quicksilverpro.io/status"
+
+[project.scripts]
+qsp = "quicksilverpro.cli:main"
+quicksilverpro = "quicksilverpro.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quicksilverpro"]
