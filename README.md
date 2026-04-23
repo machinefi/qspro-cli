@@ -6,6 +6,20 @@ Designed to be **AI-agent friendly**: every command accepts `--json` for structu
 
 ---
 
+## Related repos
+
+QuickSilver Pro is developed in three repositories under [`machinefi`](https://github.com/machinefi):
+
+| Component | Repo | Visibility |
+|-----------|------|------------|
+| **CLI** — `qsp` command-line client (this repo) | [`qspro-cli`](https://github.com/machinefi/qspro-cli) | Public |
+| Backend — API gateway + billing | [`qspro-backend`](https://github.com/machinefi/qspro-backend) | Private |
+| Frontend — landing + dashboard | [`qspro-frontend`](https://github.com/machinefi/qspro-frontend) | Private |
+
+End-user site: <https://quicksilverpro.io>.
+
+---
+
 ## Install
 
 ```bash
