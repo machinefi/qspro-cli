@@ -14,6 +14,7 @@ The CLI talks to two endpoints:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -33,8 +34,12 @@ from . import __version__
 DEFAULT_API_URL  = os.environ.get("QSP_API_URL",  "https://api.quicksilverpro.io/v1")
 DEFAULT_AUTH_URL = os.environ.get("QSP_AUTH_URL", "https://pay.quicksilverpro.io")
 DEFAULT_APP_URL  = os.environ.get("QSP_APP_URL",  "https://quicksilverpro.io")
-DEFAULT_MODEL    = os.environ.get("QSP_MODEL",    "deepseek-v3")
+DEFAULT_MODEL    = os.environ.get("QSP_MODEL",    "deepseek-v4-flash")
+DEFAULT_IMAGE_MODEL = os.environ.get("QSP_IMAGE_MODEL", "flux.2-pro")
 HTTP_TIMEOUT     = float(os.environ.get("QSP_HTTP_TIMEOUT", "60"))
+# Image generation can be slower than chat (no token streaming to mask latency),
+# so give it a roomier default unless the user has pinned QSP_HTTP_TIMEOUT.
+IMAGE_TIMEOUT    = float(os.environ.get("QSP_HTTP_TIMEOUT", "180"))
 
 CONFIG_DIR = Path(os.environ.get("QSP_CONFIG_DIR",
                                  Path.home() / ".config" / "quicksilverpro"))
@@ -266,21 +271,57 @@ def balance(as_json: bool) -> None:
 
 # ────────────────────────── qsp models ──────────────────────────
 
-# Hardcoded so `qsp models` works before the user has signed in. Keep in sync
-# with the backend; tests in CI should catch drift.
+# Per-image prices for image-generation models. The live /models endpoint does
+# not expose per-image pricing (its schema is per-token), so the CLI carries it
+# here so `qsp models` can show image costs whether or not the user is signed in.
+_IMAGE_PRICES: dict[str, float] = {
+    "flux.2-pro":     0.027,
+    "flux.1-schnell": 0.0025,
+}
+
+# Hardcoded so `qsp models` works before the user has signed in. A curated view
+# of the lineup — once signed in, `qsp models` shows the full live catalog
+# (incl. Qwen/Kimi/Gemini variants). Keep prices in sync with the backend; CI
+# smoke-tests this path. Prices verified 2026-05-26.
 _MODELS_FALLBACK: list[dict] = [
+    {"id": "deepseek-v4-flash", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1048576,
+     "pricing": {"prompt": "0.0000000800", "completion": "0.0000001600"},
+     "best_for": "fast, cheap default · 1M context"},
+    {"id": "deepseek-v4-pro", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1048576,
+     "pricing": {"prompt": "0.0000003480", "completion": "0.0000006960"},
+     "best_for": "frontier reasoning + coding · 1M context"},
     {"id": "deepseek-v3", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 131072,
-     "pricing": {"prompt": "0.0000002400", "completion": "0.0000007000"},
-     "best_for": "chat, coding, structured output"},
+     "pricing": {"prompt": "0.0000001600", "completion": "0.0000006160"},
+     "best_for": "balanced chat, coding, structured output"},
     {"id": "deepseek-r1", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 131072,
-     "pricing": {"prompt": "0.0000004000", "completion": "0.0000017000"},
-     "best_for": "math, multi-step reasoning, logic"},
-    {"id": "qwen3.5-35b", "object": "model", "owned_by": "quicksilverpro",
+     "pricing": {"prompt": "0.0000005600", "completion": "0.0000020000"},
+     "best_for": "deep reasoning, math, logic"},
+    {"id": "qwen3.7-max", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1048576,
+     "pricing": {"prompt": "0.0000020000", "completion": "0.0000060000"},
+     "best_for": "flagship Qwen · agentic, long-context"},
+    {"id": "qwen3.6-plus", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1048576,
+     "pricing": {"prompt": "0.0000002600", "completion": "0.0000015600"},
+     "best_for": "strong general-purpose · 1M context"},
+    {"id": "qwen3.6-35b", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 262144,
-     "pricing": {"prompt": "0.0000001300", "completion": "0.0000010000"},
-     "best_for": "long-context RAG, summarization (thinking model)"},
+     "pricing": {"prompt": "0.0000001200", "completion": "0.0000008000"},
+     "best_for": "efficient long-context RAG (thinking model)"},
+    {"id": "kimi-k2.6", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 256000,
+     "pricing": {"prompt": "0.0000005840", "completion": "0.0000027900"},
+     "best_for": "agentic, tool use, long-context"},
+    {"id": "flux.2-pro", "object": "model", "owned_by": "quicksilverpro",
+     "price_per_image": 0.027,
+     "best_for": "high-fidelity text-to-image"},
+    {"id": "flux.1-schnell", "object": "model", "owned_by": "quicksilverpro",
+     "price_per_image": 0.0025,
+     "best_for": "fast, cheap text-to-image"},
 ]
 
 
@@ -308,22 +349,50 @@ def models(as_json: bool) -> None:
     _emit(data, as_json=as_json, table_fn=_print_models)
 
 
+def _is_image_model(m: dict) -> bool:
+    """Image-gen models bill per image, not per token. Detect via an explicit
+    per-image price or the known-id allowlist — deliberately NOT by "missing
+    token pricing", which would misfile any sparse/new chat entry (or a
+    token-priced model like gemini-*-image) into the image table. An image
+    model we haven't catalogued yet just shows in the chat table with '—'
+    prices until it's added to _IMAGE_PRICES."""
+    return m.get("price_per_image") is not None or m.get("id") in _IMAGE_PRICES
+
+
+def _image_price(m: dict) -> float | None:
+    p = m.get("price_per_image")
+    return p if p is not None else _IMAGE_PRICES.get(m.get("id", ""))
+
+
 def _print_models(rows: list[dict]) -> None:
-    t = Table(show_lines=False)
-    t.add_column("id", style="bold")
-    t.add_column("context", justify="right")
-    t.add_column("prompt $/M", justify="right")
-    t.add_column("completion $/M", justify="right")
-    for m in rows:
-        p = m.get("pricing") or {}
-        ctx = m.get("context_length")
-        t.add_row(
-            m.get("id", ""),
-            f"{ctx:,}" if ctx else "—",
-            f"{float(p.get('prompt', 0)) * 1_000_000:.2f}" if p else "—",
-            f"{float(p.get('completion', 0)) * 1_000_000:.2f}" if p else "—",
-        )
-    _out.print(t)
+    chat = [m for m in rows if not _is_image_model(m)]
+    imgs = [m for m in rows if _is_image_model(m)]
+
+    if chat:
+        t = Table(show_lines=False)
+        t.add_column("id", style="bold")
+        t.add_column("context", justify="right")
+        t.add_column("prompt $/M", justify="right")
+        t.add_column("completion $/M", justify="right")
+        for m in chat:
+            p = m.get("pricing") or {}
+            ctx = m.get("context_length")
+            t.add_row(
+                m.get("id", ""),
+                f"{ctx:,}" if ctx else "—",
+                f"{float(p.get('prompt', 0)) * 1_000_000:.2f}" if p else "—",
+                f"{float(p.get('completion', 0)) * 1_000_000:.2f}" if p else "—",
+            )
+        _out.print(t)
+
+    if imgs:
+        t = Table(show_lines=False, title="Image generation")
+        t.add_column("id", style="bold")
+        t.add_column("$/image", justify="right")
+        for m in imgs:
+            price = _image_price(m)
+            t.add_row(m.get("id", ""), f"${price:.4f}" if price is not None else "—")
+        _out.print(t)
 
 
 # ────────────────────────── qsp chat ──────────────────────────
@@ -447,6 +516,155 @@ def _chat_stream(key: str, body: dict) -> None:
             f"{last_usage.get('completion_tokens',0)} out · "
             f"${last_usage['cost']:.6f}[/dim]"
         )
+
+
+# ────────────────────────── qsp image ──────────────────────────
+
+# Magic-byte → extension table for sniffing the returned image format when the
+# server doesn't tell us (it usually does via `output_format`).
+def _img_ext(raw: bytes, fmt_hint: str | None) -> str:
+    if fmt_hint:
+        h = fmt_hint.lower().lstrip(".")
+        if h in ("jpg", "jpeg"):  return "jpg"
+        if h in ("png", "webp", "gif"):  return h
+    if raw[:3] == b"\xff\xd8\xff":              return "jpg"
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":         return "png"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":  return "webp"
+    if raw[:4] in (b"GIF8",):                   return "gif"
+    return "png"  # safe default
+
+
+def _image_bytes(item: dict) -> bytes:
+    """An image item carries either inline base64 or a URL. Prefer base64 (what
+    the API returns by default); otherwise download the URL. Raises ValueError
+    on a malformed item or bad payload so callers can fail cleanly rather than
+    tracebacking on an AttributeError / silently writing garbage."""
+    if not isinstance(item, dict):
+        raise ValueError("image item was not an object")
+    b64 = item.get("b64_json")
+    if b64:
+        try:
+            # Tolerate MIME-style line wrapping; reject non-alphabet garbage
+            # (validate=True), which would otherwise decode to empty/garbage.
+            cleaned = "".join(b64.split()) if isinstance(b64, str) else b64
+            raw = base64.b64decode(cleaned, validate=True)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"could not decode base64 image data ({e})") from e
+        if not raw:
+            raise ValueError("decoded image was empty")
+        return raw
+    url = item.get("url")
+    if url:
+        with httpx.Client(timeout=HTTP_TIMEOUT,
+                          headers={"User-Agent": f"quicksilverpro-cli/{__version__}"},
+                          follow_redirects=True) as c:
+            r = c.get(url)
+        r.raise_for_status()
+        return r.content
+    raise ValueError("image response had neither b64_json nor url")
+
+
+def _image_stem(output: str | None) -> Path:
+    """The shared filename base for an invocation: the user's path minus its
+    extension, or a single timestamped default (computed once so every image in
+    a multi-image run shares the same base)."""
+    return Path(output).with_suffix("") if output else Path(f"qsp-image-{int(time.time())}")
+
+
+def _image_path(stem: Path, index: int, count: int, ext: str) -> Path:
+    """One output path. Single image → stem.<ext>; many → stem-1.<ext>, … . The
+    extension always reflects the *actual* returned format (sniffed per image)
+    so a file is never mislabeled; the caller warns if it differs from a
+    user-requested extension."""
+    if count == 1:
+        return stem.with_suffix(f".{ext}")
+    return stem.parent / f"{stem.name}-{index + 1}.{ext}"
+
+
+@main.command(help="Generate an image from a text prompt and save it to disk.")
+@click.argument("prompt")
+@click.option("-m", "--model", default=DEFAULT_IMAGE_MODEL, show_default=True,
+              help="Image model, e.g. flux.2-pro or flux.1-schnell.")
+@click.option("-o", "--output", default=None,
+              help="Output file. Default: qsp-image-<ts>.<ext> in the current dir. "
+                   "With -n > 1 a 1-based index is inserted before the extension.")
+@click.option("--size", default=None, help="Image size, e.g. 1024x1024 (model-dependent).")
+@click.option("-n", "--n", "count", type=click.IntRange(min=1, max=10), default=1,
+              show_default=True,
+              help="Number of images. Each is a separate request and a separate charge.")
+@click.option("--json", "as_json", is_flag=True,
+              help="Emit the raw JSON response(s) (incl. base64) instead of saving files.")
+def image(prompt: str, model: str, output: str | None, size: str | None,
+          count: int, as_json: bool) -> None:
+    key = _require_key()
+    body: dict = {"model": model, "prompt": prompt}
+    if size:
+        body["size"] = size
+
+    # The image endpoint accepts only n=1, so for multiple images we loop
+    # client-side rather than sending n>1 (which the server rejects). Images can
+    # take longer than chat with no stream to mask the wait, hence IMAGE_TIMEOUT.
+    #
+    # Each generation is a separate paid request, so we emit/write each result
+    # the moment its request succeeds — never batch then flush. That way a
+    # failure on request 3 of 5 still leaves images 1–2 safely on disk (or
+    # already streamed to stdout) rather than discarding work the user paid for.
+    stem = _image_stem(output)
+    with httpx.Client(
+        base_url=DEFAULT_API_URL, timeout=IMAGE_TIMEOUT,
+        headers={"Authorization": f"Bearer {key}",
+                 "User-Agent": f"quicksilverpro-cli/{__version__}",
+                 "Content-Type": "application/json"},
+        follow_redirects=False,
+    ) as c:
+        for i in range(count):
+            r = c.post("/images/generations", json=body)
+            if r.status_code >= 400:
+                _err.print(f"[red]{_extract_error(r)}[/red]")
+                sys.exit(1)
+            resp = r.json()
+
+            # A 200 with no image — or an unexpected response shape — is still a
+            # failure. Fail loudly rather than silently producing fewer outputs
+            # than the user paid for (or tracebacking on a non-dict response).
+            data = resp.get("data") if isinstance(resp, dict) else None
+            if not isinstance(data, list) or not data:
+                _err.print(f"[red]Image {i + 1} of {count}: server returned no image.[/red]")
+                sys.exit(1)
+
+            if as_json:
+                # Stream each response immediately. One object for n=1 (pretty);
+                # one compact object per line (JSONL) for n>1, so an interrupted
+                # multi-image run still leaves the earlier payloads on stdout.
+                click.echo(json.dumps(resp, indent=2 if count == 1 else None))
+                continue
+
+            # Materialize + write each image under a guard so a bad payload
+            # (invalid base64) or a disk problem on image k exits cleanly with a
+            # message rather than a raw traceback. httpx errors from a URL fetch
+            # propagate to run()'s network handler, as elsewhere in the CLI.
+            try:
+                raw = _image_bytes(data[0])
+                ext = _img_ext(raw, resp.get("output_format"))
+                if i == 0:
+                    _warn_ext_override(output, ext)
+                path = _image_path(stem, i, count, ext)
+                path.write_bytes(raw)
+            except (OSError, ValueError) as e:
+                _err.print(f"[red]Failed to save image {i + 1} of {count}:[/red] {e}")
+                sys.exit(1)
+            _out.print(f"✓ Saved [bold]{path}[/bold] [dim]({len(raw):,} bytes)[/dim]")
+
+
+def _warn_ext_override(output: str | None, ext: str) -> None:
+    """The upstream image format is fixed (currently JPEG) and ignores any
+    requested extension. We always save with the real extension so the file is
+    never mislabeled — but if the user asked for a different one, say so."""
+    if output and (want := Path(output).suffix.lower().lstrip(".")):
+        want = "jpg" if want == "jpeg" else want
+        if want != ext:
+            _err.print(f"[yellow]Note:[/yellow] the image API returned {ext.upper()}; "
+                       f"saved with a .{ext} extension (you requested .{want}).")
 
 
 # ────────────────────────── qsp keys ──────────────────────────
@@ -671,6 +889,14 @@ def run() -> None:
         # that escaped the per-request handlers. Keep the message short; full repr
         # is often noisy and unhelpful to end users.
         _err.print(f"[red]Network error:[/red] {type(e).__name__}: {e}")
+        sys.exit(1)
+    except json.JSONDecodeError:
+        # A 2xx with a non-JSON / truncated body (proxy error page, partial
+        # read) would otherwise traceback. Fail like any other remote error.
+        _err.print(
+            f"[red]Unexpected response from QuickSilver Pro[/red] (could not parse). "
+            f"Try again, or check [bold]https://quicksilverpro.io/status[/bold]."
+        )
         sys.exit(1)
     except click.UsageError as e:
         e.show()

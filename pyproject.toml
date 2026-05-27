@@ -4,15 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quicksilverpro"
-version = "0.1.2"
-description = "CLI for QuickSilver Pro — OpenAI-compatible API for DeepSeek V3, DeepSeek R1, and Qwen 3.5 at 20% below resellers."
+version = "0.2.0"
+description = "CLI for QuickSilver Pro — one OpenAI-compatible API for DeepSeek, Qwen, Kimi, Gemini chat and FLUX image generation."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "MachineFi Inc.", email = "hello@quicksilverpro.io" }]
 keywords = [
-  "openai", "deepseek", "qwen", "llm", "inference", "api",
-  "chatgpt", "ai", "cli", "openrouter-alternative", "quicksilverpro",
+  "openai", "deepseek", "qwen", "kimi", "gemini", "flux",
+  "llm", "inference", "api", "chatgpt", "ai", "cli",
+  "image-generation", "text-to-image", "openrouter-alternative", "quicksilverpro",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
