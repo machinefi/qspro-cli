@@ -2,7 +2,7 @@
 
 `qsp` — a command-line client for [QuickSilver Pro](https://quicksilverpro.io), one OpenAI-compatible API for top LLMs (DeepSeek, Qwen, Kimi, Gemini) **and** FLUX text-to-image — billed to a single balance. Open-source chat models run 20% below OpenRouter / Together / Fireworks.
 
-Designed to be **AI-agent friendly**: every command accepts `--json` for structured output, exit codes are reliable, and the API surface is intentionally small.
+Designed to be **AI-agent friendly**: data commands accept `--json` for structured output, exit codes are reliable, and the API surface is intentionally small.
 
 ---
 
@@ -65,7 +65,7 @@ qsp status                        # live per-model latency
 
 ## AI-agent usage
 
-Every command supports `--json` and prints OpenAI-shaped JSON to stdout with errors on stderr.
+Data commands (`chat`, `image`, `models`, `balance`, `usage`, `status`, `keys list`/`create`, `whoami`) support `--json` and print OpenAI-shaped JSON to stdout with errors on stderr.
 
 ```bash
 qsp models --json | jq '.[].id'
