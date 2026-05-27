@@ -2,7 +2,7 @@
 
 Design goals:
   1. Drop-in OpenAI-compatible thin wrapper: `qsp chat "..."` works immediately.
-  2. AI-agent friendly: every command accepts `--json` and emits structured
+  2. AI-agent friendly: data commands accept `--json` and emit structured
      output on stdout with errors on stderr and non-zero exit codes on failure.
   3. No config surprises: API key lives in `~/.config/quicksilverpro/config.json`
      (or `$QSP_CONFIG_DIR`); the `QSP_API_KEY` env var overrides.
