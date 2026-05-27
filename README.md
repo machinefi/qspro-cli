@@ -1,6 +1,6 @@
 # QuickSilver Pro CLI
 
-`qsp` — a command-line client for [QuickSilver Pro](https://quicksilverpro.io), an OpenAI-compatible inference API for top open-source LLMs (DeepSeek V3, DeepSeek R1, Qwen 3.5) priced 20% below OpenRouter / Together / Fireworks.
+`qsp` — a command-line client for [QuickSilver Pro](https://quicksilverpro.io), one OpenAI-compatible API for top LLMs (DeepSeek, Qwen, Kimi, Gemini) **and** FLUX text-to-image — billed to a single balance. Open-source chat models run 20% below OpenRouter / Together / Fireworks.
 
 Designed to be **AI-agent friendly**: every command accepts `--json` for structured output, exit codes are reliable, and the API surface is intentionally small.
 
@@ -33,11 +33,12 @@ Python 3.9+. Also exports itself as `quicksilverpro` if you prefer the long name
 ## Quick start
 
 ```bash
-qsp init                     # opens dashboard to get a key, stores it locally
-qsp chat "Write me a haiku"  # one-shot streaming chat (deepseek-v3 by default)
-qsp balance                  # current credits
-qsp models                   # supported models with prices & context length
-qsp status                   # live per-model latency
+qsp init                          # opens dashboard to get a key, stores it locally
+qsp chat "Write me a haiku"       # one-shot streaming chat (deepseek-v4-flash by default)
+qsp image "a fox in the snow"     # text-to-image, saves a file (flux.2-pro by default)
+qsp balance                       # current credits
+qsp models                        # supported models with prices & context length
+qsp status                        # live per-model latency
 ```
 
 ---
@@ -52,6 +53,7 @@ qsp status                   # live per-model latency
 | `qsp balance [--json]` | Credit balance + lifetime spend |
 | `qsp models [--json]` | Available models + pricing + context length |
 | `qsp chat "PROMPT" [-m MODEL] [-s SYS] [--max-tokens N] [--temperature F] [--no-stream] [--json]` | One-shot completion, streams to stdout by default |
+| `qsp image "PROMPT" [-m MODEL] [-o FILE] [--size WxH] [-n N] [--json]` | Text-to-image; saves to a file (`flux.2-pro` by default) |
 | `qsp usage [-n 10] [--json]` | Recent calls + aggregate per-model |
 | `qsp status [--json]` | Live health of API + per-model probes |
 | `qsp keys list [--json]` | Your API keys |
@@ -69,6 +71,8 @@ Every command supports `--json` and prints OpenAI-shaped JSON to stdout with err
 qsp models --json | jq '.[].id'
 qsp usage --json  | jq '.totals.cost'
 qsp chat "Summarize: $DOCUMENT" --json --no-stream | jq -r '.choices[0].message.content'
+qsp image "a fox in the snow" -o fox.png        # writes fox.png
+qsp image "a fox in the snow" --json | jq -r '.data[0].b64_json' | base64 -d > fox.png
 ```
 
 Exit codes: `0` success · `1` remote/operational error · `2` usage / auth error.
@@ -83,8 +87,9 @@ Key stored at `~/.config/quicksilverpro/config.json` (chmod 600). Override with:
 - `QSP_API_URL` — default `https://api.quicksilverpro.io/v1`
 - `QSP_AUTH_URL` — default `https://pay.quicksilverpro.io`
 - `QSP_MODEL` — default model for `qsp chat`
+- `QSP_IMAGE_MODEL` — default model for `qsp image`
 - `QSP_CONFIG_DIR` — where to store config
-- `QSP_HTTP_TIMEOUT` — seconds, default 60
+- `QSP_HTTP_TIMEOUT` — seconds, default 60 (image requests default to 180)
 
 ---
 
