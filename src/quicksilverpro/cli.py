@@ -306,7 +306,7 @@ _MODELS_FALLBACK: list[dict] = [
      "best_for": "efficient long-context RAG (thinking model)"},
     {"id": "kimi-k2.6", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 256000,
-     "pricing": {"prompt": "0.0000005840", "completion": "0.0000027900"},
+     "pricing": {"prompt": "0.0000005472", "completion": "0.0000027280"},
      "best_for": "agentic, tool use, long-context"},
     {"id": "flux.2-pro", "object": "model", "owned_by": "quicksilverpro",
      "price_per_image": 0.027,
