@@ -104,7 +104,7 @@ client = OpenAI(
     api_key="sk-...",   # your QuickSilver Pro key
 )
 r = client.chat.completions.create(
-    model="deepseek-v3",
+    model="deepseek-v4-flash",
     messages=[{"role": "user", "content": "Hello"}],
 )
 ```

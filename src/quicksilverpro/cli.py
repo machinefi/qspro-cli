@@ -282,24 +282,16 @@ _IMAGE_PRICES: dict[str, float] = {
 # Hardcoded so `qsp models` works before the user has signed in. A curated view
 # of the lineup — once signed in, `qsp models` shows the full live catalog
 # (incl. Qwen/Kimi/Gemini variants). Keep prices in sync with the backend; CI
-# smoke-tests this path. Prices verified 2026-05-26.
+# smoke-tests this path. Prices verified 2026-07-31.
 _MODELS_FALLBACK: list[dict] = [
     {"id": "deepseek-v4-flash", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
-     "pricing": {"prompt": "0.0000000800", "completion": "0.0000001600"},
-     "best_for": "fast, cheap default · 1M context"},
+     "pricing": {"prompt": "0.0000001120", "completion": "0.0000002240"},
+     "best_for": "official 0731 agent model · Codex · 1M context"},
     {"id": "deepseek-v4-pro", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
      "pricing": {"prompt": "0.0000003480", "completion": "0.0000006960"},
      "best_for": "frontier reasoning + coding · 1M context"},
-    {"id": "deepseek-v3", "object": "model", "owned_by": "quicksilverpro",
-     "context_length": 131072,
-     "pricing": {"prompt": "0.0000001600", "completion": "0.0000006160"},
-     "best_for": "balanced chat, coding, structured output"},
-    {"id": "deepseek-r1", "object": "model", "owned_by": "quicksilverpro",
-     "context_length": 131072,
-     "pricing": {"prompt": "0.0000005600", "completion": "0.0000020000"},
-     "best_for": "deep reasoning, math, logic"},
     {"id": "qwen3.7-max", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
      "pricing": {"prompt": "0.0000020000", "completion": "0.0000060000"},
