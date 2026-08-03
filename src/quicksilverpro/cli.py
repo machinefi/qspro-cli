@@ -298,7 +298,7 @@ _MODELS_FALLBACK: list[dict] = [
      "best_for": "flagship Qwen · autonomous coding, long-horizon agents"},
     {"id": "qwen3.7-max", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
-     "pricing": {"prompt": "0.0000014750", "completion": "0.0000044250"},
+     "pricing": {"prompt": "0.0000012500", "completion": "0.0000037500"},
      "best_for": "flagship Qwen · agentic, long-context"},
     {"id": "qwen3.7-flash", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
