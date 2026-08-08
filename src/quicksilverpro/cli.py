@@ -275,53 +275,54 @@ def balance(as_json: bool) -> None:
 # not expose per-image pricing (its schema is per-token), so the CLI carries it
 # here so `qsp models` can show image costs whether or not the user is signed in.
 _IMAGE_PRICES: dict[str, float] = {
-    "flux.2-pro":     0.027,
-    "flux.1-schnell": 0.0025,
+    "flux.2-pro": 0.027,
 }
 
-# Hardcoded so `qsp models` works before the user has signed in. A curated view
-# of the lineup — once signed in, `qsp models` shows the full live catalog
-# (incl. Qwen/Kimi/Gemini variants). Keep prices in sync with the backend; CI
-# smoke-tests this path. Prices verified 2026-07-31.
+# Hardcoded so `qsp models` works before the user has signed in. A curated,
+# hot-first view of the lineup — once signed in, `qsp models` shows the full
+# live catalog (30+ models incl. every Qwen/Kimi/Gemini/Claude variant). Keep
+# prices in sync with the backend; CI smoke-tests this path. Prices verified
+# 2026-08-08 against qsp.gateway_model_pricing.
 _MODELS_FALLBACK: list[dict] = [
-    {"id": "deepseek-v4-flash", "object": "model", "owned_by": "quicksilverpro",
+    {"id": "claude-opus-5", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1000000,
+     "pricing": {"prompt": "0.0000040000", "completion": "0.0000200000"},
+     "best_for": "Anthropic flagship · deepest reasoning + agentic coding"},
+    {"id": "claude-sonnet-5", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1000000,
+     "pricing": {"prompt": "0.0000020000", "completion": "0.0000100000"},
+     "best_for": "Claude Sonnet 5 · balanced coding + long-context agents"},
+    {"id": "gpt-5.6-sol", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
-     "pricing": {"prompt": "0.0000001120", "completion": "0.0000002240"},
-     "best_for": "official 0731 agent model · Codex · 1M context"},
-    {"id": "deepseek-v4-pro", "object": "model", "owned_by": "quicksilverpro",
-     "context_length": 1048576,
-     "pricing": {"prompt": "0.0000003480", "completion": "0.0000006960"},
-     "best_for": "frontier reasoning + coding · 1M context"},
+     "pricing": {"prompt": "0.0000040000", "completion": "0.0000240000"},
+     "best_for": "OpenAI GPT-5.6 Sol · frontier reasoning + tool use"},
     {"id": "qwen3.8-max", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
      "pricing": {"prompt": "0.0000020000", "completion": "0.0000060000"},
      "best_for": "flagship Qwen · autonomous coding, long-horizon agents"},
-    {"id": "qwen3.7-max", "object": "model", "owned_by": "quicksilverpro",
+    {"id": "kimi-k3", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
-     "pricing": {"prompt": "0.0000012500", "completion": "0.0000037500"},
-     "best_for": "flagship Qwen · agentic, long-context"},
-    {"id": "qwen3.7-flash", "object": "model", "owned_by": "quicksilverpro",
+     "pricing": {"prompt": "0.0000024000", "completion": "0.0000120000"},
+     "best_for": "Moonshot Kimi K3 · agentic coding + tool use · 1M context"},
+    {"id": "muse-spark-1.2", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
-     "pricing": {"prompt": "0.0000000240", "completion": "0.0000001040"},
-     "best_for": "fast multimodal agents · vision · 1M context"},
-    {"id": "qwen3.6-plus", "object": "model", "owned_by": "quicksilverpro",
+     "pricing": {"prompt": "0.0000010000", "completion": "0.0000034000"},
+     "best_for": "Meta Muse Spark · long-context coding agent"},
+    {"id": "deepseek-v4-pro", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
-     "pricing": {"prompt": "0.0000002600", "completion": "0.0000015600"},
-     "best_for": "strong general-purpose · 1M context"},
-    {"id": "qwen3.6-35b", "object": "model", "owned_by": "quicksilverpro",
-     "context_length": 262144,
-     "pricing": {"prompt": "0.0000001120", "completion": "0.0000008000"},
-     "best_for": "efficient long-context RAG (thinking model)"},
-    {"id": "kimi-k2.6", "object": "model", "owned_by": "quicksilverpro",
-     "context_length": 256000,
-     "pricing": {"prompt": "0.0000005472", "completion": "0.0000027280"},
-     "best_for": "agentic, tool use, long-context"},
+     "pricing": {"prompt": "0.0000003480", "completion": "0.0000006960"},
+     "best_for": "frontier reasoning + coding · 1M context"},
+    {"id": "deepseek-v4-flash", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1048576,
+     "pricing": {"prompt": "0.0000001120", "completion": "0.0000002240"},
+     "best_for": "official 0731 agent model · lowest cost · 1M context"},
+    {"id": "gemini-3.6-flash", "object": "model", "owned_by": "quicksilverpro",
+     "context_length": 1048576,
+     "pricing": {"prompt": "0.0000012750", "completion": "0.0000063750"},
+     "best_for": "Google Gemini · fast multimodal · 1M context"},
     {"id": "flux.2-pro", "object": "model", "owned_by": "quicksilverpro",
      "price_per_image": 0.027,
      "best_for": "high-fidelity text-to-image"},
-    {"id": "flux.1-schnell", "object": "model", "owned_by": "quicksilverpro",
-     "price_per_image": 0.0025,
-     "best_for": "fast, cheap text-to-image"},
 ]
 
 
@@ -584,7 +585,7 @@ def _image_path(stem: Path, index: int, count: int, ext: str) -> Path:
 @main.command(help="Generate an image from a text prompt and save it to disk.")
 @click.argument("prompt")
 @click.option("-m", "--model", default=DEFAULT_IMAGE_MODEL, show_default=True,
-              help="Image model, e.g. flux.2-pro or flux.1-schnell.")
+              help="Image model, e.g. flux.2-pro.")
 @click.option("-o", "--output", default=None,
               help="Output file. Default: qsp-image-<ts>.<ext> in the current dir. "
                    "With -n > 1 a 1-based index is inserted before the extension.")

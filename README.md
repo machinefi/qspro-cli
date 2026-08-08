@@ -1,6 +1,6 @@
 # QuickSilver Pro CLI
 
-`qsp` — a command-line client for [QuickSilver Pro](https://quicksilverpro.io), one OpenAI-compatible API for top LLMs (DeepSeek, Qwen, Kimi, Gemini) **and** FLUX text-to-image — billed to a single balance. Open-source chat models run 20% below OpenRouter / Together / Fireworks.
+`qsp` — a command-line client for [QuickSilver Pro](https://quicksilverpro.io), one OpenAI-compatible API for frontier and open-source LLMs (Claude, GPT, Gemini, DeepSeek, Qwen, Kimi, Muse) **and** FLUX text-to-image — all billed to a single balance. Open-source chat models run up to 20% below OpenRouter.
 
 Designed to be **AI-agent friendly**: data commands accept `--json` for structured output, exit codes are reliable, and the API surface is intentionally small.
 
@@ -25,6 +25,15 @@ End-user site: <https://quicksilverpro.io>.
 ```bash
 pip install quicksilverpro
 ```
+
+Or run it with no install:
+
+```bash
+uvx quicksilverpro chat "Write me a haiku"     # via uv — fetches Python for you: https://docs.astral.sh/uv/
+pipx run quicksilverpro chat "Write me a haiku"  # via pipx (needs Python 3.10+)
+```
+
+On Windows, `uvx` is the simplest path — uv downloads a suitable Python automatically. On macOS you can also `brew install machinefi/qspro/qspro`.
 
 Python 3.9+. Also exports itself as `quicksilverpro` if you prefer the long name.
 
