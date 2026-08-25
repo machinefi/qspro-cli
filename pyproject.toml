@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quicksilverpro"
-version = "0.3.0"
-description = "CLI for QuickSilver Pro — one OpenAI-compatible API for Claude, GPT, Gemini, DeepSeek, Qwen, Kimi and Muse chat plus FLUX image generation, on a single balance."
+version = "0.4.0"
+description = "CLI for QuickSilver Pro — one OpenAI-compatible API for Claude, GPT, Gemini, Grok, GLM, DeepSeek, Qwen, Kimi and Muse chat plus FLUX image generation, on a single balance."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -14,7 +14,7 @@ keywords = [
   "openai", "claude", "anthropic", "gpt", "gemini", "deepseek", "qwen",
   "kimi", "muse", "flux", "llm", "inference", "api", "chatgpt", "ai", "cli",
   "coding-agent", "image-generation", "text-to-image",
-  "openrouter-alternative", "quicksilverpro",
+  "openrouter-alternative", "quicksilverpro", "grok", "glm", "nemotron",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

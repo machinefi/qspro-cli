@@ -1,6 +1,6 @@
 # QuickSilver Pro CLI
 
-`qsp` — a command-line client for [QuickSilver Pro](https://quicksilverpro.io), one OpenAI-compatible API for frontier and open-source LLMs (Claude, GPT, Gemini, DeepSeek, Qwen, Kimi, Muse) **and** FLUX text-to-image — all billed to a single balance. Open-source chat models run up to 20% below OpenRouter.
+`qsp` — a command-line client for [QuickSilver Pro](https://quicksilverpro.io), one OpenAI-compatible API for frontier and open-source LLMs (Claude, GPT, Gemini, Grok, GLM, DeepSeek, Qwen, Kimi, Muse) **and** FLUX text-to-image — all billed to a single balance. Open-source chat models run up to 20% below OpenRouter.
 
 Designed to be **AI-agent friendly**: data commands accept `--json` for structured output, exit codes are reliable, and the API surface is intentionally small.
 
