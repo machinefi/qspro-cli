@@ -310,7 +310,7 @@ _MODELS_FALLBACK: list[dict] = [
      "best_for": "flagship Qwen · autonomous coding, long-horizon agents"},
     {"id": "kimi-k3", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 1048576,
-     "pricing": {"prompt": "0.0000024000", "completion": "0.0000120000"},
+     "pricing": {"prompt": "0.0000025500", "completion": "0.0000127500"},
      "best_for": "Moonshot Kimi K3 · agentic coding + tool use · 1M context"},
     {"id": "kimi-k2.7-code", "object": "model", "owned_by": "quicksilverpro",
      "context_length": 256000,
