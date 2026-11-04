@@ -100,8 +100,13 @@ def get(mid, as_json):
 )
 @click.option("--wait", "do_wait", is_flag=True)
 @click.option("--timeout", type=click.IntRange(1, 180), default=180)
+@click.option(
+    "--accept-spend",
+    is_flag=True,
+    help="Explicitly approve billable creation without an interactive prompt.",
+)
 @json_option
-def create(name, size, request_id, do_wait, timeout, as_json):
+def create(name, size, request_id, do_wait, timeout, accept_spend, as_json):
     with MachinesClient() as client:
         # Display effective account policy, without guessing deployed prices.
         policy = client.list()
@@ -111,6 +116,19 @@ def create(name, size, request_id, do_wait, timeout, as_json):
             ),
             err=True,
         )
+        if not accept_spend:
+            if not sys.stdin.isatty():
+                raise MachineError(
+                    "consent_required",
+                    "Billable creation requires interactive approval or --accept-spend.",
+                    2,
+                )
+            if not click.confirm(
+                "Create a billable box under the displayed prices and limits?",
+                default=False,
+                err=True,
+            ):
+                raise MachineError("consent_required", "Billable creation was declined.", 2)
         result = client.create(
             name,
             int(size),

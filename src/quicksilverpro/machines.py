@@ -46,7 +46,8 @@ def safe_path(path):
     return path
 
 
-def atomic_write(path, data, private=False):
+def atomic_write(path, data, private=False, expected=Ellipsis):
+    """Replace atomically; optional expected bytes (None for absent) detect stale writes."""
     path = safe_path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if private:
@@ -59,6 +60,14 @@ def atomic_write(path, data, private=False):
             os.fsync(out.fileno())
         os.chmod(temporary, 0o600)
         safe_path(path)
+        if expected is not Ellipsis:
+            current = path.read_bytes() if path.exists() else None
+            if current != expected:
+                raise MachineError(
+                    "config_conflict",
+                    "Configuration changed during setup; preserving it. Rerun setup.",
+                    2,
+                )
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):

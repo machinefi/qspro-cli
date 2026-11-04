@@ -273,3 +273,92 @@ def test_env_key_storage_requires_explicit_choice(installed, monkeypatch):
     assert keys == []
     assert invoke(*args, "--store-key").exit_code == 0
     assert keys == ["qsm_test_only"]
+
+
+@mcp_installer
+@pytest.mark.parametrize("agent", ["cursor", "opencode", "codex"])
+@pytest.mark.parametrize("change", ["unrelated", "owned_entry", "new_entry"])
+def test_mcp_config_edits_during_consent(installed, monkeypatch, agent, change):
+    _, config, section = installer.paths()[agent]
+    args = ("--no-install-cli", "--no-skills", "--agents", agent)
+    if change != "new_entry":
+        assert invoke(*args, "--yes").exit_code == 0
+    monkeypatch.setattr(installer, "persistent_executable", lambda: str(installed) + "-updated")
+    edited = []
+
+    def approve(message, yes=False):
+        assert "local stdio MCP" in message
+        config.parent.mkdir(parents=True, exist_ok=True)
+        text, _ = installer.config_read(config, section)
+        if change == "unrelated":
+            text = ('# changed during consent\nmodel = "user-choice"\n' + text
+                    if agent == "codex" else
+                    text.replace("{", '{\n// changed during consent\n"theme":"user-choice",', 1))
+        else:
+            entry = {"command": "user-owned", "args": ["custom"]}
+            if agent == "codex":
+                doc = tomlkit.parse(text)
+                if section not in doc:
+                    doc[section] = tomlkit.table()
+                doc[section]["quicksilver"] = entry
+                text = tomlkit.dumps(doc)
+            else:
+                text = set_entry(text, section, "quicksilver", entry)
+        config.write_text(text)
+        edited.append(text)
+        return True
+
+    monkeypatch.setattr(installer, "consent", approve)
+    result = invoke(*args)
+    assert result.exit_code == 0, result.output
+    assert len(edited) == 1
+    if change == "unrelated":
+        text, entry = installer.config_read(config, section)
+        assert "changed during consent" in text
+        assert "user-choice" in text
+        assert entry["command"] == ([str(installed) + "-updated", "mcp"]
+                                    if agent == "opencode" else str(installed) + "-updated")
+    else:
+        assert "Conflict" in result.output
+        assert config.read_text() == edited[0]
+        manifest = installer.read_json(installer.manifest_path(), {"entries": {}})
+        owned = manifest["entries"].get(str(config))
+        assert not owned or owned["hash"] != installer.entry_digest(
+            installer.config_read(config, section)[1]
+        )
+
+
+@pytest.mark.parametrize("initial", [None, '{}\n'])
+def test_config_change_rejects_stale_snapshot(tmp_path, initial):
+    from quicksilverpro.machines import MachineError
+
+    config = tmp_path / "config.json"
+    if initial is not None:
+        config.write_text(initial)
+    text, _ = installer.config_read(config, "mcpServers")
+    config.write_text('{"user":"changed"}')
+    with pytest.raises(MachineError) as error:
+        installer.config_change(config, "mcpServers", text, {"command": "qsp"})
+    assert error.value.code == "config_conflict"
+    assert config.read_text() == '{"user":"changed"}'
+
+
+@pytest.mark.parametrize("initial", [None, "{}\n"])
+def test_config_change_detects_edit_while_preparing_replacement(monkeypatch, tmp_path, initial):
+    from quicksilverpro.machines import MachineError
+
+    config = tmp_path / "config.json"
+    if initial is not None:
+        config.write_text(initial)
+    original_write = installer.backup_write
+
+    def concurrent_edit(path, text, **kwargs):
+        config.write_text('{"user":"latest"}')
+        original_write(path, text, **kwargs)
+
+    monkeypatch.setattr(installer, "backup_write", concurrent_edit)
+    with pytest.raises(MachineError) as error:
+        installer.config_change(config, "mcpServers", '{}\n', {"command": "qsp"})
+    assert error.value.code == "config_conflict"
+    assert config.read_text() == '{"user":"latest"}'
+    assert not list(tmp_path.glob(".qsp-*"))

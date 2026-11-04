@@ -88,7 +88,7 @@ def consent(message, yes=False):
     return click.confirm(message, default=False)
 
 
-def backup_write(path, text):
+def backup_write(path, text, expected=Ellipsis):
     path = safe_path(path)
     if path.exists():
         original = path.read_bytes()
@@ -97,7 +97,7 @@ def backup_write(path, text):
         )
         if not backup.exists():
             atomic_write(backup, original, private=True)
-    atomic_write(path, text)
+    atomic_write(path, text, expected=expected)
 
 
 def config_read(path, section):
@@ -114,6 +114,17 @@ def config_read(path, section):
 
 
 def config_change(path, section, text, entry):
+    path = safe_path(path)
+    original = path.read_bytes() if path.exists() else None
+    current = (
+        original.decode().replace("\r\n", "\n").replace("\r", "\n")
+        if original is not None
+        else ("" if section == "mcp_servers" else "{}\n")
+    )
+    if current != text:
+        raise MachineError(
+            "config_conflict", "Configuration changed during setup; preserving it. Rerun setup.", 2
+        )
     if section == "mcp_servers":
         doc = tomlkit.parse(text)
         if entry is None:
@@ -125,7 +136,7 @@ def config_change(path, section, text, entry):
         output = tomlkit.dumps(doc)
     else:
         output = set_entry(text, section, "quicksilver", entry)
-    backup_write(path, output)
+    backup_write(path, output, expected=original)
 
 
 def persistent_executable():
@@ -426,6 +437,12 @@ def setup(
             + " (machine control; credentials resolved by qsp)?",
             yes,
         ):
+            continue
+        # Consent may stay open while another client edits this file. Merge unrelated
+        # changes, but never claim or replace a newly added/user-edited entry.
+        text, existing = config_read(config, section)
+        if existing is not None and (not old or entry_digest(existing) != old["hash"]):
+            click.echo("Conflict; preserving user-owned/edited MCP entry: " + str(config))
             continue
         if existing != entry:
             if agent == "claude":

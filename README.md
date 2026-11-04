@@ -183,7 +183,8 @@ remote key revocation remains a browser action.
 ```bash
 qsp box ls --json                    # inspect existing boxes, prices and effective limits
 # Obtain user consent before billable creation/resume.
-qsp box create --name work --wait --json
+qsp box create --name work --wait --json  # prompts for billable creation approval
+# For automation, use --accept-spend only after explicit user approval.
 qsp box get MID --json
 qsp box wait MID --timeout 180 --json
 qsp box exec MID --argv-json '["python3","--version"]' --json

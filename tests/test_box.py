@@ -117,8 +117,8 @@ def test_create_lost_response_deduplication(mock_api, tmp_path):
         return httpx.Response(201, json={"machine": {"id": MID}})
 
     mock_api(handler)
-    first = run("create", "--name", "work", "--json")
-    second = run("create", "--name", "work", "--json")
+    first = run("create", "--name", "work", "--accept-spend", "--json")
+    second = run("create", "--name", "work", "--accept-spend", "--json")
     assert first.exit_code == 1
     assert second.exit_code == 0
     assert received[0] == received[1]
@@ -288,7 +288,7 @@ def test_lost_create_reports_request_id_before_failure(mock_api):
         raise httpx.ReadError("lost")
 
     mock_api(handler)
-    result = run("create", "--name", "work", "--json")
+    result = run("create", "--name", "work", "--accept-spend", "--json")
     request_id = json.loads(result.stdout)["error"]["request_id"]
     assert request_id in result.stderr
 
@@ -348,3 +348,54 @@ def test_stream_http_permission_error_is_json(mock_api):
     result = run("exec", MID, "--command", "work", "--stream", "--json")
     assert result.exit_code == 2
     assert json.loads(result.stdout)["error"]["status_code"] == 403
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_create_headless_requires_spend_flag(mock_api, monkeypatch, tmp_path, as_json):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    calls = mock_api(lambda r: httpx.Response(200, json={"prices": {"2": 0.02}}))
+    result = run("create", "--name", "work", *(["--json"] if as_json else []))
+    assert result.exit_code == 2, result.output
+    assert "--accept-spend" in result.output
+    assert [r.method for r in calls] == ["GET"]
+    assert not (tmp_path / ".config/quicksilverpro/create-requests.json").exists()
+    if as_json:
+        assert json.loads(result.stdout)["error"]["code"] == "consent_required"
+
+
+@pytest.mark.parametrize("answer,exit_code", [("y", 0), ("n", 2), ("", 2)])
+def test_create_interactive_consent(mock_api, monkeypatch, answer, exit_code):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "quicksilverpro.box.sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True))
+    )
+    calls = mock_api(
+        lambda r: httpx.Response(
+            200 if r.method == "GET" else 201,
+            json={"prices": {"2": 0.02}, "limits": {"stored": 1}}
+            if r.method == "GET" else {"machine": {"id": MID}},
+        )
+    )
+    result = CliRunner().invoke(
+        main, ["box", "create", "--name", "work", "--json"], input=answer + "\n"
+    )
+    assert result.exit_code == exit_code, result.output
+    assert [r.method for r in calls] == (["GET", "POST"] if exit_code == 0 else ["GET"])
+    assert "billable" in result.stderr
+    assert result.stderr.index('"prices"') < result.stderr.index("Create a billable")
+    assert len(result.stdout.splitlines()) == 1
+    assert json.loads(result.stdout)["kind"] == ("result" if exit_code == 0 else "cli_error")
+
+
+def test_create_explicit_spend_flag_skips_prompt(mock_api, monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Explicit spend approval must not prompt")
+
+    monkeypatch.setattr("click.confirm", forbidden)
+    calls = mock_api(lambda r: httpx.Response(200, json={"machine": {"id": MID}}))
+    result = run("create", "--name", "work", "--accept-spend", "--json")
+    assert result.exit_code == 0, result.output
+    assert [r.method for r in calls] == ["GET", "POST"]
