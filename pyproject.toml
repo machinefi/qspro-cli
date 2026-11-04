@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quicksilverpro"
-version = "0.4.0"
+version = "0.5.0"
 description = "CLI for QuickSilver Pro — one OpenAI-compatible API for Claude, GPT, Gemini, Grok, GLM, DeepSeek, Qwen, Kimi and Muse chat plus FLUX image generation, on a single balance."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,6 +28,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Utilities",
@@ -36,7 +37,14 @@ dependencies = [
   "click>=8.1",
   "httpx>=0.25",
   "rich>=13",
+  "tomlkit>=0.13,<1",
 ]
+
+[project.optional-dependencies]
+mcp = ["mcp==1.25.0; python_version >= '3.10'", "jsonschema>=4.23,<5; python_version >= '3.10'"]
+shell = ["websockets==15.0.1"]
+keychain = ["keyring>=25,<26; python_version >= '3.10'"]
+test = ["pytest>=8,<9", "pytest-cov>=6,<7"]
 
 [project.urls]
 Homepage     = "https://quicksilverpro.io"
