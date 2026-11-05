@@ -194,7 +194,9 @@ qsp box cp MID:result.bin ./result.bin --overwrite --json
 qsp box open MID --view desktop --json
 qsp box shell MID                    # POSIX TTY, optional shell extra; Ctrl-] disconnects
 qsp box pause MID --json             # files remain subject to retention
-qsp box resume MID --wait --json     # billing resumes
+qsp box resume MID --wait --json     # shows prices/limits and prompts to resume billing
+# Automation after explicit user approval:
+qsp box resume MID --wait --accept-spend --json
 qsp box rm MID --yes --wait --json   # destructive; requires user authorization
 ```
 

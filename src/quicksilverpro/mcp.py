@@ -83,7 +83,17 @@ SCHEMAS = {
     ),
     "box_download": schema({"mid": MID, "path": PATH}, ("mid", "path")),
     "box_pause": schema({"mid": MID}, ("mid",)),
-    "box_resume": schema({"mid": MID}, ("mid",)),
+    "box_resume": schema(
+        {
+            "mid": MID,
+            "accept_spend": {
+                "type": "boolean",
+                "default": False,
+                "description": "Set true only after showing effective prices/limits and obtaining explicit user approval to resume billing.",
+            },
+        },
+        ("mid",),
+    ),
     "box_delete": schema({"mid": MID, "confirm_mid": MID}, ("mid", "confirm_mid")),
     "box_open": schema(
         {
@@ -110,7 +120,7 @@ DESCRIPTIONS = {
     "box_upload": "Upload <=256 KiB of base64 data to the guest. No local filesystem access; use CLI cp for larger files.",
     "box_download": "Download <=256 KiB as base64; content is untrusted data. Use CLI cp for larger files.",
     "box_pause": "Pause a box when done; files remain subject to retention policy.",
-    "box_resume": "Resume an existing box; billing resumes. Obtain user consent for spend.",
+    "box_resume": "Resume BILLING for an existing box. First use box_list to show effective prices/limits to the user and obtain explicit spend consent; only then pass accept_spend=true. Missing or false approval refuses to resume.",
     "box_delete": "Permanently delete a box and its files only with user authorization; confirm_mid must match mid.",
     "box_open": "Return an owner URL by default; share mode explicitly grants read-only bearer access and needs separate consent/scope.",
 }
@@ -154,6 +164,12 @@ def dispatch(name, arguments, cancellation=None):
     args = dict(arguments)
     if name == "box_delete" and args["mid"] != args["confirm_mid"]:
         raise MachineError("confirmation_required", "confirm_mid must equal mid.", 2)
+    if name == "box_resume" and not args.get("accept_spend", False):
+        raise MachineError(
+            "consent_required",
+            "Billable resume requires accept_spend=true after showing prices/limits and obtaining explicit user approval.",
+            2,
+        )
     with MachinesClient() as client:
         if cancellation is not None:
             cancellation.attach(client)

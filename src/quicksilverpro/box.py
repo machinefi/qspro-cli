@@ -77,6 +77,29 @@ def json_option(fn):
     return click.option("--json", "as_json", is_flag=True, help="Emit a versioned JSON object.")(fn)
 
 
+def confirm_spend(client, operation, accept_spend):
+    # Display effective account policy, without guessing deployed prices.
+    policy = client.list()
+    click.echo(
+        json.dumps(
+            {k: policy[k] for k in ("prices", "limits", "retention", "trial") if k in policy}
+        ),
+        err=True,
+    )
+    if not accept_spend:
+        if not sys.stdin.isatty():
+            raise MachineError(
+                "consent_required",
+                f"Billable {operation} requires interactive approval or --accept-spend.",
+                2,
+            )
+        prompt = "Create a billable box" if operation == "creation" else "Resume billing for this box"
+        if not click.confirm(
+            prompt + " under the displayed prices and limits?", default=False, err=True
+        ):
+            raise MachineError("consent_required", f"Billable {operation} was declined.", 2)
+
+
 @box.command("ls")
 @json_option
 def listing(as_json):
@@ -108,27 +131,7 @@ def get(mid, as_json):
 @json_option
 def create(name, size, request_id, do_wait, timeout, accept_spend, as_json):
     with MachinesClient() as client:
-        # Display effective account policy, without guessing deployed prices.
-        policy = client.list()
-        click.echo(
-            json.dumps(
-                {k: policy[k] for k in ("prices", "limits", "retention", "trial") if k in policy}
-            ),
-            err=True,
-        )
-        if not accept_spend:
-            if not sys.stdin.isatty():
-                raise MachineError(
-                    "consent_required",
-                    "Billable creation requires interactive approval or --accept-spend.",
-                    2,
-                )
-            if not click.confirm(
-                "Create a billable box under the displayed prices and limits?",
-                default=False,
-                err=True,
-            ):
-                raise MachineError("consent_required", "Billable creation was declined.", 2)
+        confirm_spend(client, "creation", accept_spend)
         result = client.create(
             name,
             int(size),
@@ -279,9 +282,16 @@ def pause(mid, as_json):
 @click.argument("mid")
 @click.option("--wait", "do_wait", is_flag=True)
 @click.option("--timeout", type=click.IntRange(1, 180), default=180)
+@click.option(
+    "--accept-spend",
+    is_flag=True,
+    help="Explicitly approve resuming billing without an interactive prompt.",
+)
 @json_option
-def resume(mid, do_wait, timeout, as_json):
+def resume(mid, do_wait, timeout, accept_spend, as_json):
+    mid_value(mid)
     with MachinesClient() as client:
+        confirm_spend(client, "resume", accept_spend)
         result = client.action(mid, "resume")
         emit(client.wait(mid, timeout) if do_wait else result, as_json)
 

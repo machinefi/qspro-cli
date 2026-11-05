@@ -264,10 +264,11 @@ def test_link_defaults_no_browser(mock_api, monkeypatch):
 )
 def test_lifecycle_exact_action(mock_api, command, action):
     calls = mock_api(lambda r: httpx.Response(202, json={"state": "Deleting"}))
-    result = run(command, MID, *(["--yes"] if command == "rm" else []), "--json")
+    flags = {"rm": ["--yes"], "resume": ["--accept-spend"]}.get(command, [])
+    result = run(command, MID, *flags, "--json")
     assert result.exit_code == 0
-    assert calls[0].url.path.endswith("/action/" + action)
-    assert json.loads(calls[0].content) == {}
+    assert calls[-1].url.path.endswith("/action/" + action)
+    assert json.loads(calls[-1].content) == {}
 
 
 def test_installed_entrypoint_propagates_exit(monkeypatch):
@@ -350,11 +351,12 @@ def test_stream_http_permission_error_is_json(mock_api):
     assert json.loads(result.stdout)["error"]["status_code"] == 403
 
 
+@pytest.mark.parametrize("command", [("create", "--name", "work"), ("resume", MID)])
 @pytest.mark.parametrize("as_json", [False, True])
-def test_create_headless_requires_spend_flag(mock_api, monkeypatch, tmp_path, as_json):
+def test_headless_requires_spend_flag(mock_api, monkeypatch, tmp_path, as_json, command):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     calls = mock_api(lambda r: httpx.Response(200, json={"prices": {"2": 0.02}}))
-    result = run("create", "--name", "work", *(["--json"] if as_json else []))
+    result = run(*command, *(["--json"] if as_json else []))
     assert result.exit_code == 2, result.output
     assert "--accept-spend" in result.output
     assert [r.method for r in calls] == ["GET"]
@@ -363,8 +365,12 @@ def test_create_headless_requires_spend_flag(mock_api, monkeypatch, tmp_path, as
         assert json.loads(result.stdout)["error"]["code"] == "consent_required"
 
 
+@pytest.mark.parametrize(
+    "command,prompt",
+    [(("create", "--name", "work"), "Create a billable"), (("resume", MID), "Resume billing")],
+)
 @pytest.mark.parametrize("answer,exit_code", [("y", 0), ("n", 2), ("", 2)])
-def test_create_interactive_consent(mock_api, monkeypatch, answer, exit_code):
+def test_interactive_consent(mock_api, monkeypatch, answer, exit_code, command, prompt):
     from types import SimpleNamespace
 
     monkeypatch.setattr(
@@ -378,17 +384,18 @@ def test_create_interactive_consent(mock_api, monkeypatch, answer, exit_code):
         )
     )
     result = CliRunner().invoke(
-        main, ["box", "create", "--name", "work", "--json"], input=answer + "\n"
+        main, ["box", *command, "--json"], input=answer + "\n"
     )
     assert result.exit_code == exit_code, result.output
     assert [r.method for r in calls] == (["GET", "POST"] if exit_code == 0 else ["GET"])
-    assert "billable" in result.stderr
-    assert result.stderr.index('"prices"') < result.stderr.index("Create a billable")
+    assert result.stderr.index('"prices"') < result.stderr.index(prompt)
+    assert result.stderr.index('"limits"') < result.stderr.index(prompt)
     assert len(result.stdout.splitlines()) == 1
     assert json.loads(result.stdout)["kind"] == ("result" if exit_code == 0 else "cli_error")
 
 
-def test_create_explicit_spend_flag_skips_prompt(mock_api, monkeypatch):
+@pytest.mark.parametrize("command", [("create", "--name", "work"), ("resume", MID)])
+def test_explicit_spend_flag_skips_prompt(mock_api, monkeypatch, command):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
     def forbidden(*args, **kwargs):
@@ -396,6 +403,31 @@ def test_create_explicit_spend_flag_skips_prompt(mock_api, monkeypatch):
 
     monkeypatch.setattr("click.confirm", forbidden)
     calls = mock_api(lambda r: httpx.Response(200, json={"machine": {"id": MID}}))
-    result = run("create", "--name", "work", "--accept-spend", "--json")
+    result = run(*command, "--accept-spend", "--json")
     assert result.exit_code == 0, result.output
     assert [r.method for r in calls] == ["GET", "POST"]
+
+
+def test_resume_approved_waits_after_action(mock_api):
+    def handler(request):
+        if request.url.path == "/v1/machines":
+            return httpx.Response(200, json={"prices": {"2": 0.02}, "limits": {"running": 1}})
+        return httpx.Response(200, json={"state": "Running", "guest_ready": True})
+
+    calls = mock_api(handler)
+    result = run("resume", MID, "--accept-spend", "--wait", "--timeout", "1", "--json")
+    assert result.exit_code == 0, result.output
+    assert [(r.method, r.url.path) for r in calls] == [
+        ("GET", "/v1/machines"),
+        ("POST", f"/v1/machines/{MID}/action/resume"),
+        ("GET", f"/v1/machines/{MID}"),
+    ]
+    assert json.loads(result.stderr)["limits"] == {"running": 1}
+    assert json.loads(result.stdout)["result"]["guest_ready"] is True
+
+
+def test_resume_policy_failure_never_mutates(mock_api):
+    calls = mock_api(lambda r: httpx.Response(503, json={}))
+    result = run("resume", MID, "--accept-spend", "--json")
+    assert result.exit_code == 1
+    assert [r.method for r in calls] == ["GET"]

@@ -201,6 +201,8 @@ def test_all_remaining_tools_use_public_api(mock_api):
     )
     for action in ("pause", "resume", "delete"):
         arguments = {"mid": MID, **({"confirm_mid": MID} if action == "delete" else {})}
+        if action == "resume":
+            arguments["accept_spend"] = True
         dispatch("box_" + action, arguments)
         assert calls[-1].url.path.endswith("/action/" + action)
     assert dispatch("box_open", {"mid": MID})["access"] == "owner"
@@ -228,3 +230,36 @@ def test_mcp_large_files_require_cli(mock_api):
     with pytest.raises(MachineError) as error:
         dispatch("box_download", {"mid": MID, "path": "large.bin"})
     assert error.value.code == "use_cli_cp"
+
+
+@pytest.mark.parametrize("approval", [{}, {"accept_spend": False}, {"accept_spend": True}])
+def test_sdk_resume_requires_explicit_spend_approval(mock_api, approval):
+    calls = mock_api(lambda r: httpx.Response(202, json={"state": "Starting"}))
+
+    async def scenario():
+        async with create_connected_server_and_client_session(create_server()) as session:
+            tool = next(t for t in (await session.list_tools()).tools if t.name == "box_resume")
+            assert tool.inputSchema["properties"]["accept_spend"]["default"] is False
+            result = await session.call_tool("box_resume", {"mid": MID, **approval})
+            if approval.get("accept_spend"):
+                assert not result.isError
+                assert result.structuredContent["result"]["state"] == "Starting"
+            else:
+                assert result.isError
+                error = result.structuredContent["error"]
+                assert error["code"] == "consent_required"
+                assert "accept_spend=true" in error["message"]
+
+    anyio.run(scenario)
+    assert [(r.method, r.url.path) for r in calls] == (
+        [("POST", f"/v1/machines/{MID}/action/resume")] if approval.get("accept_spend") else []
+    )
+
+
+@pytest.mark.parametrize("approval", ["true", 1, None])
+def test_mcp_resume_rejects_non_boolean_approval(mock_api, approval):
+    calls = mock_api(lambda r: httpx.Response(202, json={}))
+    with pytest.raises(MachineError) as error:
+        dispatch("box_resume", {"mid": MID, "accept_spend": approval})
+    assert error.value.code == "invalid_arguments"
+    assert not calls
