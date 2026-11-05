@@ -70,7 +70,7 @@ def test_http_failures_no_secrets(mock_api, code, kind):
     )
     result = run("ls", "--json")
     assert result.exit_code == kind
-    assert "qsm_secret" not in result.output
+    assert "qsm_secret" not in all_output(result)
     assert len(calls) == 1
 
 
@@ -111,7 +111,7 @@ def test_exec_unknown_no_retry(mock_api):
     assert result.exit_code == 1
     assert json.loads(result.stdout)["error"]["code"] == "outcome_unknown"
     assert len(calls) == 1
-    assert "qsm_secret" not in result.output
+    assert "qsm_secret" not in all_output(result)
 
 
 def test_create_lost_response_deduplication(mock_api, tmp_path):
