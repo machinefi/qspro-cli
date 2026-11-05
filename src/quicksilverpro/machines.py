@@ -24,6 +24,13 @@ MAX_FILE = 64 * 1024 * 1024
 MAX_OUTPUT = 1024 * 1024
 
 
+AGENT_ACCESS_DISABLED = "agent_access_disabled"
+AGENT_ACCESS_MESSAGE = (
+    "QuickSilver Machines agent access isn't enabled for this account yet. "
+    "Check that your qsm_ key is current, or contact QuickSilver support."
+)
+
+
 class MachineError(Exception):
     def __init__(self, code, message, exit_code=1, **details):
         super().__init__(message)
@@ -274,16 +281,30 @@ class MachinesClient:
                 raw = raw if isinstance(raw, dict) else {}
             except (ValueError, AttributeError):
                 raw = {}
-            code = raw.get("code", "http_" + str(response.status_code))
+            status = response.status_code
+            has_code = isinstance(raw.get("code"), str)
+            code = raw.get("code", "http_" + str(status))
             code = (
                 code
                 if isinstance(code, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", code)
                 else "api_error"
             )
+            message = "Machines API request failed (HTTP %s)." % status
+            exit_code = 2 if status in (401, 403) else 1
+            # Agent access disabled: 401 anywhere, or 404 on the account-level endpoints
+            # (a 404 on a specific machine ID still means "no such machine").
+            account_level = response.request.url.path.rstrip("/") in (
+                "/v1/machines",
+                "/v1/machines/auth",
+            )
+            if not has_code and (status == 401 or (status == 404 and account_level)):
+                code = AGENT_ACCESS_DISABLED
+                message = AGENT_ACCESS_MESSAGE
+                exit_code = 2
             raise MachineError(
                 code,
-                "Machines API request failed (HTTP %s)." % response.status_code,
-                2 if response.status_code in (401, 403) else 1,
+                message,
+                exit_code,
                 status_code=response.status_code,
                 retryable=raw.get("retryable") is True,
                 retry_after_seconds=raw.get("retry_after_seconds")

@@ -45,6 +45,11 @@ SCHEMAS = {
             "size": {"type": "integer", "enum": [2, 4], "default": 2},
             "request_id": {"type": "string", "pattern": "^[a-zA-Z0-9-]{16,64}$"},
             "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 180, "default": 0},
+            "accept_spend": {
+                "type": "boolean",
+                "default": False,
+                "description": "Set true only after showing effective prices/limits and obtaining explicit user approval to create a billable box.",
+            },
         },
         ("name", "request_id"),
     ),
@@ -111,7 +116,7 @@ SCHEMAS = {
     ),
 }
 DESCRIPTIONS = {
-    "box_create": "Create a BILLABLE QuickSilver box only with user consent. Check prices/limits and existing boxes first. Reuse request_id after unknown outcome.",
+    "box_create": "Create a BILLABLE QuickSilver box. First use box_list to show effective prices/limits and existing boxes to the user and obtain explicit spend consent; only then pass accept_spend=true. Missing or false approval refuses to create. Reuse request_id after unknown outcome.",
     "box_list": "Read existing boxes, effective limits, prices and account metadata without creating anything.",
     "box_get": "Read one box's public state, readiness and retention.",
     "box_wait": "Wait for Running AND guest_ready, without resuming or creating.",
@@ -164,12 +169,14 @@ def dispatch(name, arguments, cancellation=None):
     args = dict(arguments)
     if name == "box_delete" and args["mid"] != args["confirm_mid"]:
         raise MachineError("confirmation_required", "confirm_mid must equal mid.", 2)
-    if name == "box_resume" and not args.get("accept_spend", False):
-        raise MachineError(
-            "consent_required",
-            "Billable resume requires accept_spend=true after showing prices/limits and obtaining explicit user approval.",
-            2,
-        )
+    if name in ("box_create", "box_resume"):
+        if not args.pop("accept_spend", False):
+            operation = "creation" if name == "box_create" else "resume"
+            raise MachineError(
+                "consent_required",
+                f"Billable {operation} requires accept_spend=true after showing prices/limits and obtaining explicit user approval.",
+                2,
+            )
     with MachinesClient() as client:
         if cancellation is not None:
             cancellation.attach(client)

@@ -431,3 +431,33 @@ def test_resume_policy_failure_never_mutates(mock_api):
     result = run("resume", MID, "--accept-spend", "--json")
     assert result.exit_code == 1
     assert [r.method for r in calls] == ["GET"]
+
+
+@pytest.mark.parametrize(
+    "status,path_args",
+    [(404, ("ls",)), (401, ("ls",)), (401, ("get", MID)), (404, ("create", "--name", "w", "--accept-spend"))],
+)
+def test_agent_access_disabled_json(mock_api, status, path_args):
+    mock_api(lambda r: httpx.Response(status, json={"detail": "Not Found"}))
+    result = run(*path_args, "--json")
+    assert result.exit_code == 2
+    error = json.loads(result.stdout)["error"]
+    assert error["code"] == "agent_access_disabled"
+    assert "agent access isn't enabled for this account yet" in error["message"]
+
+
+def test_agent_access_disabled_human(mock_api):
+    mock_api(lambda r: httpx.Response(404, text="nope"))
+    result = run("ls")
+    assert result.exit_code == 2
+    assert "QuickSilver Machines agent access isn't enabled for this account yet" in result.stderr
+    assert "Traceback" not in result.output
+
+
+def test_machine_404_and_coded_errors_not_reclassified(mock_api):
+    mock_api(lambda r: httpx.Response(404, json={"error": {"code": "machine_not_found"}}))
+    assert json.loads(run("get", MID, "--json").stdout)["error"]["code"] == "machine_not_found"
+    mock_api(lambda r: httpx.Response(404, json={}))
+    assert json.loads(run("get", MID, "--json").stdout)["error"]["code"] == "http_404"
+    mock_api(lambda r: httpx.Response(401, json={"error": {"code": "invalid_key"}}))
+    assert json.loads(run("ls", "--json").stdout)["error"]["code"] == "invalid_key"

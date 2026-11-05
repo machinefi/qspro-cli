@@ -181,7 +181,12 @@ def test_all_remaining_tools_use_public_api(mock_api):
     assert (
         dispatch(
             "box_create",
-            {"name": "work", "request_id": "test-create-request-0001", "wait_seconds": 1},
+            {
+                "name": "work",
+                "request_id": "test-create-request-0001",
+                "wait_seconds": 1,
+                "accept_spend": True,
+            },
         )["owner_link"]["access"]
         == "owner"
     )
@@ -261,5 +266,50 @@ def test_mcp_resume_rejects_non_boolean_approval(mock_api, approval):
     calls = mock_api(lambda r: httpx.Response(202, json={}))
     with pytest.raises(MachineError) as error:
         dispatch("box_resume", {"mid": MID, "accept_spend": approval})
+    assert error.value.code == "invalid_arguments"
+    assert not calls
+
+
+CREATE = {"name": "work", "request_id": "test-create-request-0001"}
+
+
+@pytest.mark.parametrize("approval", [{}, {"accept_spend": False}, {"accept_spend": True}])
+def test_sdk_create_requires_explicit_spend_approval(mock_api, tmp_path, approval):
+    def handler(r):
+        if r.method == "POST":
+            return httpx.Response(201, json={"machine": {"id": MID}})
+        return httpx.Response(200, json={})
+
+    calls = mock_api(handler)
+
+    async def scenario():
+        async with create_connected_server_and_client_session(create_server()) as session:
+            tool = next(t for t in (await session.list_tools()).tools if t.name == "box_create")
+            assert tool.inputSchema["properties"]["accept_spend"]["default"] is False
+            assert "accept_spend=true" in tool.description
+            result = await session.call_tool("box_create", {**CREATE, **approval})
+            if approval.get("accept_spend"):
+                assert not result.isError
+            else:
+                assert result.isError
+                error = result.structuredContent["error"]
+                assert error["code"] == "consent_required"
+                assert "accept_spend=true" in error["message"]
+
+    anyio.run(scenario)
+    posts = [r for r in calls if r.method == "POST"]
+    assert bool(posts) == bool(approval.get("accept_spend"))
+    if posts:
+        assert b"accept_spend" not in posts[0].content
+    else:
+        assert not calls  # rejected before ANY request, including the journal write
+        assert not list(tmp_path.rglob("create-requests.json"))
+
+
+@pytest.mark.parametrize("approval", ["true", 1, None])
+def test_mcp_create_rejects_non_boolean_approval(mock_api, approval):
+    calls = mock_api(lambda r: httpx.Response(201, json={}))
+    with pytest.raises(MachineError) as error:
+        dispatch("box_create", {**CREATE, "accept_spend": approval})
     assert error.value.code == "invalid_arguments"
     assert not calls
