@@ -24,6 +24,15 @@ def run(*args):
     return runner.invoke(main, ["box", *args])
 
 
+def all_output(result):
+    """stdout + stderr on every Click version (older Click keeps stderr separate)."""
+    try:
+        err = result.stderr
+    except ValueError:
+        err = ""
+    return result.output + (err if err not in result.output else "")
+
+
 def test_json_auth_separate(monkeypatch):
     monkeypatch.delenv("QSP_MACHINES_KEY")
     monkeypatch.setenv("QSP_API_KEY", "sk_inference")
@@ -358,7 +367,7 @@ def test_headless_requires_spend_flag(mock_api, monkeypatch, tmp_path, as_json, 
     calls = mock_api(lambda r: httpx.Response(200, json={"prices": {"2": 0.02}}))
     result = run(*command, *(["--json"] if as_json else []))
     assert result.exit_code == 2, result.output
-    assert "--accept-spend" in result.output
+    assert "--accept-spend" in all_output(result)
     assert [r.method for r in calls] == ["GET"]
     assert not (tmp_path / ".config/quicksilverpro/create-requests.json").exists()
     if as_json:
