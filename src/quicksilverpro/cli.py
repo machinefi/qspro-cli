@@ -1,4 +1,4 @@
-"""QuickSilver Pro CLI — single-file implementation.
+"""QuickSilver Pro CLI — inference commands and modular Machines integrations.
 
 Design goals:
   1. Drop-in OpenAI-compatible thin wrapper: `qsp chat "..."` works immediately.
@@ -28,6 +28,9 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
+from .box import box
+from .mcp import mcp
+from .setup import setup
 
 # ────────────────────────── constants ──────────────────────────
 
@@ -878,6 +881,11 @@ def pay(amount: str) -> None:
         pass
 
 
+# Machines integrations are independent of inference authentication.
+main.add_command(box)
+main.add_command(mcp)
+main.add_command(setup)
+
 # ────────────────────────── entrypoint ──────────────────────────
 
 def run() -> None:
@@ -886,7 +894,9 @@ def run() -> None:
     firewall drop. Anything that's not a network error falls back to click's
     normal behaviour (usage errors, aborts, explicit SystemExit from commands)."""
     try:
-        main(standalone_mode=False)
+        exit_code = main(standalone_mode=False)
+        if isinstance(exit_code, int):
+            sys.exit(exit_code)
     except httpx.ConnectError:
         _err.print(
             f"[red]Can't reach QuickSilver Pro.[/red] "

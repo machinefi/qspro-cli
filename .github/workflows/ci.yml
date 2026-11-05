@@ -2,25 +2,56 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/qsp-box]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  smoke:
-    runs-on: ubuntu-latest
+  tests:
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
-        python: ["3.9", "3.11", "3.13"]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-      - name: Install
-        run: pip install -e .
-      - name: Smoke — version / help / public models
+      - name: Install base CLI and test extras
+        run: python -m pip install -e '.[test,shell]'
+      - name: Install optional pinned MCP on supported Python
+        if: matrix.python != '3.9'
+        run: python -m pip install -e '.[mcp]'
+      - name: Mock-only tests with temporary homes
+        run: python -m pytest -q
+      - name: Offline command smoke
+        env:
+          QSP_API_KEY: ""
+          OPENAI_API_KEY_QSP: ""
+          QSP_CONFIG_DIR: ${{ runner.temp }}/qsp-offline-config
         run: |
           qsp --version
           qsp --help
+          qsp box --help
           qsp models
-          qsp status --json > /dev/null
+          qsp setup --dry-run --agents claude,codex,cursor,opencode,gemini,antigravity
+
+  packaging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install wheel and verify bundled skills
+        run: |
+          python -m pip install dist/*.whl
+          cd /tmp
+          qsp --version
+          qsp box --help
+          python -c 'from importlib.resources import files; p = files("quicksilverpro").joinpath("skills", "quicksilver-machines"); assert p.joinpath("SKILL.md").is_file(); assert p.joinpath("references", "api.md").is_file()'
