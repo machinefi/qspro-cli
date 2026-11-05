@@ -1,3 +1,4 @@
+import inspect
 import json
 import sys
 
@@ -29,8 +30,17 @@ def installed(monkeypatch, mock_api, tmp_path):
     return executable
 
 
+def runner():
+    """Separate stderr on every Click version (8.1 mixes it by default)."""
+    return (
+        CliRunner(mix_stderr=False)
+        if "mix_stderr" in inspect.signature(CliRunner).parameters
+        else CliRunner()
+    )
+
+
 def invoke(*args):
-    return CliRunner().invoke(main, ["setup", *args])
+    return runner().invoke(main, ["setup", *args])
 
 
 def test_dry_run_no_writes_or_auth(monkeypatch, tmp_path):
@@ -133,7 +143,7 @@ def test_no_secrets_in_manifest(installed, tmp_path):
 def test_create_requires_distinct_consent(installed):
     result = invoke("--yes", "--no-install-cli", "--no-skills", "--no-mcp", "--create", "work")
     assert result.exit_code == 2
-    assert "--yes does not authorize spend" in result.output
+    assert "--yes does not authorize spend" in result.stderr
 
 
 @mcp_installer

@@ -15,13 +15,17 @@ from quicksilverpro.machines import (
 MID = "abcdef012345"
 
 
-def run(*args):
-    runner = (
+def runner():
+    """Separate stderr on every Click version (8.1 mixes it by default)."""
+    return (
         CliRunner(mix_stderr=False)
         if "mix_stderr" in inspect.signature(CliRunner).parameters
         else CliRunner()
     )
-    return runner.invoke(main, ["box", *args])
+
+
+def run(*args):
+    return runner().invoke(main, ["box", *args])
 
 
 def all_output(result):
@@ -392,15 +396,17 @@ def test_interactive_consent(mock_api, monkeypatch, answer, exit_code, command, 
             if r.method == "GET" else {"machine": {"id": MID}},
         )
     )
-    result = CliRunner().invoke(
+    result = runner().invoke(
         main, ["box", *command, "--json"], input=answer + "\n"
     )
     assert result.exit_code == exit_code, result.output
     assert [r.method for r in calls] == (["GET", "POST"] if exit_code == 0 else ["GET"])
     assert result.stderr.index('"prices"') < result.stderr.index(prompt)
     assert result.stderr.index('"limits"') < result.stderr.index(prompt)
-    assert len(result.stdout.splitlines()) == 1
-    assert json.loads(result.stdout)["kind"] == ("result" if exit_code == 0 else "cli_error")
+    # Click 8.1's runner echoes prompt input to stdout even with err=True.
+    stdout = result.stdout.removeprefix(f" {answer}\n")
+    assert len(stdout.splitlines()) == 1
+    assert json.loads(stdout)["kind"] == ("result" if exit_code == 0 else "cli_error")
 
 
 @pytest.mark.parametrize("command", [("create", "--name", "work"), ("resume", MID)])
