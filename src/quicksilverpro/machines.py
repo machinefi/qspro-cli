@@ -206,7 +206,7 @@ class MachinesClient:
         self.key = key or resolve_key()
         if not isinstance(self.key, str) or not self.key.startswith("qsm_"):
             raise MachineError("invalid_key", "A separate qsm_ Machines key is required.", 2)
-        origin = origin or os.environ.get("QSP_MACHINES_URL", "https://api.quicksilverpro.io")
+        origin = origin or os.environ.get("QSP_MACHINES_URL", "https://pay.quicksilverpro.io")
         parsed = urlsplit(origin)
         if (
             parsed.scheme != "https"

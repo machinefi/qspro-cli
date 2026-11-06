@@ -239,7 +239,7 @@ filesystem paths; larger files use CLI copy. Delete requires matching `confirm_m
 The packaged [agent reference](src/quicksilverpro/skills/quicksilver-machines/references/api.md)
 documents schemas, SSE framing, transfer/terminal adapter assumptions and the
 remaining backend/actual-client interoperability gates. The default Machines origin
-is `https://api.quicksilverpro.io`; `QSP_MACHINES_URL` overrides it independently of
+is `https://pay.quicksilverpro.io`; `QSP_MACHINES_URL` overrides it independently of
 inference. HTTPS is required and credential redirects are refused.
 
 Development checks: `pip install -e '.[test,mcp,shell]'` then `pytest -q`.
