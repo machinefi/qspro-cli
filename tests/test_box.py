@@ -143,7 +143,10 @@ def test_create_lost_response_deduplication(mock_api, tmp_path):
 
 def test_wait_requires_guest_ready(mock_api, monkeypatch):
     states = iter(
-        [{"state": "Running", "guest_ready": False}, {"state": "Running", "guest_ready": True}]
+        [
+            {"state": "Running", "guest_ready": False},
+            {"state": "Running", "guest_ready": True},
+        ]
     )
     calls = mock_api(lambda r: httpx.Response(200, json={"machine": next(states)}))
     monkeypatch.setattr("quicksilverpro.machines.time.sleep", lambda n: None)
@@ -199,17 +202,25 @@ def test_binary_copy(mock_api, tmp_path):
             return httpx.Response(
                 200,
                 json={
-                    "url": "https://files.example/capability",
-                    "size": len(content),
-                    "sha256": checksum,
+                    "host": "https://files.example",
+                    "token": "cap&?",
+                    "resource": body["resource"],
+                    "expires_in": 60,
+                    "mode": "cli",
                 },
             )
         assert "authorization" not in request.headers
+        assert request.url.path == f"/files/{MID}/" + (
+            "upload" if request.method == "POST" else "download"
+        )
+        assert dict(request.url.params) == {"path": "a.bin", "token": "cap&?"}
         if request.method == "POST":
             assert content in request.read()
             assert request.headers["content-type"].startswith("multipart/form-data")
             return httpx.Response(200, json={"size": len(content), "sha256": checksum})
-        return httpx.Response(200, content=content)
+        return httpx.Response(
+            200, content=content, headers={"X-Checksum-SHA256": checksum}
+        )
 
     mock_api(handler)
     source = tmp_path / "source.bin"
@@ -220,22 +231,33 @@ def test_binary_copy(mock_api, tmp_path):
     assert target.read_bytes() == content
     assert run("cp", MID + ":a.bin", str(target), "--json").exit_code == 2
     assert grants[0]["overwrite"] is False
-    assert grants[0]["sha256"] == checksum
+    assert grants[0] == {
+        "purpose": "upload",
+        "resource": "a.bin",
+        "size": len(content),
+        "overwrite": False,
+        "sha256": checksum,
+    }
+    assert grants[1] == {"purpose": "download", "resource": "a.bin"}
 
 
 def test_checksum_failure_preserves_destination(mock_api, tmp_path):
     def handler(request):
         if request.url.path.endswith("/token"):
             return httpx.Response(
-                200, json={"url": "https://files.example/cap", "size": 1, "sha256": "bad"}
+                200,
+                json={"host": "https://files.example", "token": "cap", "resource": "a"},
             )
-        return httpx.Response(200, content=b"a")
+        return httpx.Response(
+            200, content=b"a", headers={"X-Checksum-SHA256": "0" * 64}
+        )
 
     mock_api(handler)
     target = tmp_path / "file"
     target.write_text("original")
     result = run("cp", MID + ":a", str(target), "--overwrite", "--json")
     assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "checksum_mismatch"
     assert target.read_text() == "original"
     assert not list(tmp_path.glob(".qsp-download-*"))
 
@@ -380,14 +402,18 @@ def test_headless_requires_spend_flag(mock_api, monkeypatch, tmp_path, as_json, 
 
 @pytest.mark.parametrize(
     "command,prompt",
-    [(("create", "--name", "work"), "Create a billable"), (("resume", MID), "Resume billing")],
+    [
+        (("create", "--name", "work"), "Create a billable"),
+        (("resume", MID), "Resume billing"),
+    ],
 )
 @pytest.mark.parametrize("answer,exit_code", [("y", 0), ("n", 2), ("", 2)])
 def test_interactive_consent(mock_api, monkeypatch, answer, exit_code, command, prompt):
     from types import SimpleNamespace
 
     monkeypatch.setattr(
-        "quicksilverpro.box.sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True))
+        "quicksilverpro.box.sys",
+        SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True)),
     )
     calls = mock_api(
         lambda r: httpx.Response(
@@ -450,7 +476,12 @@ def test_resume_policy_failure_never_mutates(mock_api):
 
 @pytest.mark.parametrize(
     "status,path_args",
-    [(404, ("ls",)), (401, ("ls",)), (401, ("get", MID)), (404, ("create", "--name", "w", "--accept-spend"))],
+    [
+        (404, ("ls",)),
+        (401, ("ls",)),
+        (401, ("get", MID)),
+        (404, ("create", "--name", "w", "--accept-spend")),
+    ],
 )
 def test_agent_access_disabled_json(mock_api, status, path_args):
     mock_api(lambda r: httpx.Response(status, json={"detail": "Not Found"}))
@@ -465,14 +496,168 @@ def test_agent_access_disabled_human(mock_api):
     mock_api(lambda r: httpx.Response(404, text="nope"))
     result = run("ls")
     assert result.exit_code == 2
-    assert "QuickSilver Machines agent access isn't enabled for this account yet" in result.stderr
+    assert (
+        "QuickSilver Machines agent access isn't enabled for this account yet"
+        in result.stderr
+    )
     assert "Traceback" not in result.output
 
 
 def test_machine_404_and_coded_errors_not_reclassified(mock_api):
-    mock_api(lambda r: httpx.Response(404, json={"error": {"code": "machine_not_found"}}))
-    assert json.loads(run("get", MID, "--json").stdout)["error"]["code"] == "machine_not_found"
+    mock_api(
+        lambda r: httpx.Response(404, json={"error": {"code": "machine_not_found"}})
+    )
+    assert (
+        json.loads(run("get", MID, "--json").stdout)["error"]["code"]
+        == "machine_not_found"
+    )
     mock_api(lambda r: httpx.Response(404, json={}))
     assert json.loads(run("get", MID, "--json").stdout)["error"]["code"] == "http_404"
     mock_api(lambda r: httpx.Response(401, json={"error": {"code": "invalid_key"}}))
     assert json.loads(run("ls", "--json").stdout)["error"]["code"] == "invalid_key"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_ready_retry_then_exec(mock_api, monkeypatch, stream):
+    sleeps = []
+    monkeypatch.setattr("quicksilverpro.machines.time.sleep", sleeps.append)
+    responses = iter(
+        [
+            httpx.Response(409, json={"detail": "Machine is not ready."}),
+            httpx.Response(200, text='event: exit\ndata: {"exit_code":0}\n\n')
+            if stream
+            else httpx.Response(200, json={"exit_code": 0}),
+        ]
+    )
+    calls = mock_api(lambda r: next(responses))
+    args = (
+        ["exec", MID, "--json"]
+        + (["--stream"] if stream else [])
+        + ["--", "printf", "%s", "--json", "a b", "$(false)"]
+    )
+    result = run(*args)
+    assert result.exit_code == 0, all_output(result)
+    assert len(calls) == 2 and sleeps == [1]
+    assert json.loads(calls[-1].content)["argv"] == [
+        "printf",
+        "%s",
+        "--json",
+        "a b",
+        "$(false)",
+    ]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Guest execution could not start. Check status before retrying.",
+        "Machine generation changed.",
+        "Execution outcome unknown.",
+        "not ready after execution started",
+    ],
+)
+def test_exec_conflict_never_retried(mock_api, message):
+    calls = mock_api(lambda r: httpx.Response(409, json={"detail": message}))
+    result = run("exec", MID, "--json", "--", "true")
+    assert json.loads(result.stdout)["error"]["message"] == message
+    assert len(calls) == 1
+
+
+def test_exec_readiness_retry_bounded(mock_api, monkeypatch):
+    now = [0]
+
+    def sleep(delay):
+        now[0] += delay
+
+    monkeypatch.setattr("quicksilverpro.machines.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("quicksilverpro.machines.time.sleep", sleep)
+    calls = mock_api(
+        lambda r: httpx.Response(409, json={"detail": "Machine is not ready."})
+    )
+    result = run("exec", MID, "--json", "--", "true")
+    assert result.exit_code == 1
+    assert now[0] == 30
+    assert len(calls) <= 10
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"detail": "Choose a single file."},
+        {"error": {"code": "invalid_request", "message": "Choose a single file."}},
+    ],
+)
+def test_server_error_message(mock_api, payload):
+    mock_api(lambda r: httpx.Response(400, json=payload))
+    assert "Choose a single file." in all_output(run("get", MID))
+    assert (
+        json.loads(run("get", MID, "--json").stdout)["error"]["message"]
+        == "Choose a single file."
+    )
+
+
+def test_large_upload_rejected_before_token(mock_api, tmp_path):
+    calls = mock_api(lambda r: pytest.fail("must not request a token"))
+    source = tmp_path / "large"
+    with source.open("wb") as out:
+        out.truncate(64 * 1024 * 1024 + 1)
+    result = run("cp", str(source), MID + ":large", "--json")
+    assert result.exit_code == 2
+    assert "64 MiB" in result.stdout
+    assert not calls
+
+
+def test_box_help_and_table(mock_api):
+    from quicksilverpro.box import box
+
+    assert all(command.get_short_help_str() for command in box.commands.values())
+    mock_api(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "machines": [
+                    {
+                        "id": MID,
+                        "name": "work",
+                        "state": "Running",
+                        "size": 2,
+                        "hours_month": 1.25,
+                    }
+                ],
+                "plan": "paid",
+                "available_balance": 5,
+                "limit": 3,
+                "monthly_hours": {"used": 1.25, "cap": 100},
+            },
+        )
+    )
+    result = run("ls")
+    assert result.exit_code == 0
+    assert "HOURS THIS MONTH" in result.stdout and "1.25" in result.stdout
+    assert "Account: paid" in result.stdout and "boxes 1/3" in result.stdout
+
+
+def test_exec_modes_exclusive(mock_api):
+    calls = mock_api(lambda r: pytest.fail("invalid argv must not execute"))
+    assert run("exec", MID, "--command", "true", "--", "false").exit_code == 2
+    assert not calls
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_unknown_outcome_code_overrides_readiness_message(mock_api, stream):
+    calls = mock_api(lambda r: httpx.Response(409, json={
+        "detail": "Machine is not ready.",
+        "error": {"code": "exec_outcome_unknown", "retryable": False},
+    }))
+    args = ["exec", MID, "--json"] + (["--stream"] if stream else [])
+    result = run(*args, "--", "true")
+    assert result.exit_code == 1
+    assert len(calls) == 1
+
+
+def test_guest_json_flag_does_not_change_error_format(mock_api):
+    mock_api(lambda r: httpx.Response(400, json={"detail": "Guest rejected."}))
+    result = run("exec", MID, "--", "echo", "--json")
+    assert result.exit_code == 1
+    assert result.stderr.strip() == "Guest rejected."
+    assert not result.stdout

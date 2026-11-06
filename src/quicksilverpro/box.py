@@ -31,8 +31,9 @@ def emit(result, as_json=False, kind="result"):
 
 class BoxGroup(click.Group):
     def parse_args(self, ctx, args):
-        ctx.meta["box_json"] = "--json" in args
-        ctx.meta["box_stream"] = "--stream" in args
+        options = args[: args.index("--")] if "--" in args else args
+        ctx.meta["box_json"] = "--json" in options
+        ctx.meta["box_stream"] = "--stream" in options
         return super().parse_args(ctx, args)
 
     def invoke(self, ctx):
@@ -42,7 +43,10 @@ class BoxGroup(click.Group):
             if isinstance(error, MachineError):
                 code, payload = error.exit_code, error.payload()
             elif isinstance(error, click.UsageError):
-                code, payload = 2, {"code": "usage_error", "message": error.format_message()}
+                code, payload = (
+                    2,
+                    {"code": "usage_error", "message": error.format_message()},
+                )
             elif isinstance(error, (KeyboardInterrupt, click.Abort)):
                 code, payload = (
                     130,
@@ -54,7 +58,10 @@ class BoxGroup(click.Group):
             else:
                 code, payload = (
                     1,
-                    {"code": "local_error", "message": "Local file or terminal operation failed."},
+                    {
+                        "code": "local_error",
+                        "message": "Local file or terminal operation failed.",
+                    },
                 )
             if ctx.meta.get("box_json"):
                 data = envelope("cli_error", error=payload)
@@ -67,7 +74,8 @@ class BoxGroup(click.Group):
 
 
 @click.group(
-    cls=BoxGroup, help="Control QuickSilver boxes with a separate Machines key (beta API)."
+    cls=BoxGroup,
+    help="Control QuickSilver boxes with a separate Machines key (beta API).",
 )
 def box():
     pass
@@ -93,21 +101,49 @@ def confirm_spend(client, operation, accept_spend):
                 f"Billable {operation} requires interactive approval or --accept-spend.",
                 2,
             )
-        prompt = "Create a billable box" if operation == "creation" else "Resume billing for this box"
+        prompt = (
+            "Create a billable box"
+            if operation == "creation"
+            else "Resume billing for this box"
+        )
         if not click.confirm(
             prompt + " under the displayed prices and limits?", default=False, err=True
         ):
-            raise MachineError("consent_required", f"Billable {operation} was declined.", 2)
+            raise MachineError(
+                "consent_required", f"Billable {operation} was declined.", 2
+            )
 
 
-@box.command("ls")
+@box.command("ls", help="List boxes and account usage.")
 @json_option
 def listing(as_json):
     with MachinesClient() as client:
-        emit(client.list(), as_json)
+        result = client.list()
+        if as_json:
+            emit(result, True)
+            return
+        rows = [["ID", "NAME", "STATE", "SIZE", "HOURS THIS MONTH"]]
+        for machine in result.get("machines", []):
+            rows.append(
+                [str(machine.get(k, "-")) for k in ("id", "name", "state", "size")]
+                + [f"{machine.get('hours_month', 0):.2f}"]
+            )
+        widths = [max(len(row[i]) for row in rows) for i in range(5)]
+        for row in rows:
+            click.echo(
+                "  ".join(
+                    value.ljust(width) for value, width in zip(row, widths)
+                ).rstrip()
+            )
+        hours = result.get("monthly_hours", {})
+        click.echo(
+            f"Account: {result.get('plan', '-')} | balance ${result.get('available_balance', 0):.2f} | "
+            f"boxes {len(rows) - 1}/{result.get('limit', '-')} | "
+            f"monthly hours {hours.get('used', '-')}/{hours.get('cap', '-')}"
+        )
 
 
-@box.command()
+@box.command(help="Show box details.")
 @click.argument("mid")
 @json_option
 def get(mid, as_json):
@@ -115,11 +151,12 @@ def get(mid, as_json):
         emit(client.get(mid), as_json)
 
 
-@box.command()
+@box.command(help="Create a billable box.")
 @click.option("--name", required=True)
 @click.option("--size", type=click.Choice(["2", "4"]), default="2", show_default=True)
 @click.option(
-    "--request-id", help="Reuse for recovery; use a fresh ID for a new box with the same name/size."
+    "--request-id",
+    help="Reuse for recovery; use a fresh ID for a new box with the same name/size.",
 )
 @click.option("--wait", "do_wait", is_flag=True)
 @click.option("--timeout", type=click.IntRange(1, 180), default=180)
@@ -152,7 +189,7 @@ def create(name, size, request_id, do_wait, timeout, accept_spend, as_json):
         emit(result, as_json)
 
 
-@box.command()
+@box.command(help="Wait for a box to become ready.")
 @click.argument("mid")
 @click.option("--timeout", type=click.IntRange(1, 180), default=180)
 @json_option
@@ -161,21 +198,28 @@ def wait(mid, timeout, as_json):
         emit(client.wait(mid, timeout), as_json)
 
 
-@box.command("exec")
+@box.command("exec", help="Execute argv or an explicit shell command in a box.")
 @click.argument("mid")
+@click.argument("guest_argv", nargs=-1, type=click.UNPROCESSED)
 @click.option("--argv-json")
 @click.option("--command", help="Explicitly run guest /bin/bash -lc.")
 @click.option("--cwd")
 @click.option("--timeout", type=click.IntRange(1, 300), default=30)
 @click.option("--stream", is_flag=True)
 @json_option
-def execute(mid, argv_json, command, cwd, timeout, stream, as_json):
+def execute(mid, guest_argv, argv_json, command, cwd, timeout, stream, as_json):
     try:
         argv = json.loads(argv_json) if argv_json is not None else None
     except ValueError:
         raise click.UsageError("--argv-json must be valid JSON.")
     if argv_json is not None and argv is None:
         raise click.UsageError("--argv-json must be an array.")
+    if guest_argv:
+        if argv_json is not None or command is not None:
+            raise click.UsageError(
+                "Choose argv after --, --argv-json, or --command, exclusively."
+            )
+        argv = list(guest_argv)
     with MachinesClient() as client:
         args = dict(argv=argv, command=command, cwd=cwd, timeout_seconds=timeout)
         if stream:
@@ -200,7 +244,7 @@ def execute(mid, argv_json, command, cwd, timeout, stream, as_json):
         click.get_current_context().exit(exec_exit(result))
 
 
-@box.command()
+@box.command(help="Copy one file between local disk and a box.")
 @click.argument("source")
 @click.argument("destination")
 @click.option("--overwrite", is_flag=True)
@@ -252,7 +296,7 @@ def cp(source, destination, overwrite, as_json):
         emit(result, as_json)
 
 
-@box.command()
+@box.command(help="Get a desktop or terminal link.")
 @click.argument("mid")
 @click.option("--view", type=click.Choice(["desktop", "terminal"]), default="desktop")
 @click.option("--share", is_flag=True, help="Explicitly mint a read-only bearer share link.")
@@ -270,7 +314,7 @@ def open(mid, view, share, browser, expires_in_seconds, as_json):
         click.echo(result["url"])
 
 
-@box.command()
+@box.command(help="Pause a box.")
 @click.argument("mid")
 @json_option
 def pause(mid, as_json):
@@ -278,7 +322,7 @@ def pause(mid, as_json):
         emit(client.action(mid, "pause"), as_json)
 
 
-@box.command()
+@box.command(help="Resume a billable box.")
 @click.argument("mid")
 @click.option("--wait", "do_wait", is_flag=True)
 @click.option("--timeout", type=click.IntRange(1, 180), default=180)
@@ -296,7 +340,7 @@ def resume(mid, do_wait, timeout, accept_spend, as_json):
         emit(client.wait(mid, timeout) if do_wait else result, as_json)
 
 
-@box.command()
+@box.command(help="Permanently delete a box.")
 @click.argument("mid")
 @click.option("--yes", is_flag=True)
 @click.option("--wait", "do_wait", is_flag=True)
@@ -314,7 +358,7 @@ def rm(mid, yes, do_wait, timeout, as_json):
         emit(client.wait(mid, timeout, deleted=True) if do_wait else result, as_json)
 
 
-@box.command()
+@box.command(help="Open an interactive terminal.")
 @click.argument("mid")
 @json_option
 def shell(mid, as_json):
@@ -326,8 +370,10 @@ def shell(mid, as_json):
         bridge(client.grant(mid, "terminal")["url"])
 
 
-@box.command()
-@click.option("--mid", help="Also check an existing box's readiness without changing its state.")
+@box.command(help="Check Machines access and local setup.")
+@click.option(
+    "--mid", help="Also check an existing box's readiness without changing its state."
+)
 @json_option
 def doctor(mid, as_json):
     from .setup import discovery

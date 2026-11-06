@@ -12,9 +12,9 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlencode
 
 import httpx
 
@@ -108,7 +108,9 @@ def resolve_key():
         key = entry.get("key") if isinstance(entry, dict) else None
     if not isinstance(key, str) or not key.strip().startswith("qsm_"):
         raise MachineError(
-            "auth_required", "Run qsp setup or set QSP_MACHINES_KEY (a qsm_ Machines key).", 2
+            "auth_required",
+            "Run qsp setup or set QSP_MACHINES_KEY (a qsm_ Machines key).",
+            2,
         )
     return key.strip()
 
@@ -123,7 +125,9 @@ def store_key(key):
         return
     except Exception:
         atomic_write(
-            config_dir() / "machines.json", json.dumps({"machines": {"key": key}}), private=True
+            config_dir() / "machines.json",
+            json.dumps({"machines": {"key": key}}),
+            private=True,
         )
 
 
@@ -169,7 +173,9 @@ def exec_body(argv=None, command=None, cwd=None, timeout_seconds=30, env=None):
     if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 300:
         raise MachineError("invalid_exec", "Exec timeout must be 1..300 seconds.", 2)
     body = {"timeout_seconds": timeout_seconds}
-    body["argv" if argv is not None else "command"] = argv if argv is not None else command
+    body["argv" if argv is not None else "command"] = (
+        argv if argv is not None else command
+    )
     if cwd is not None:
         body["cwd"] = "/home/user/" + workspace_path(cwd)
     if env is not None:
@@ -275,12 +281,14 @@ class MachinesClient:
 
     def check(self, response):
         if not 200 <= response.status_code < 300:
-            # Do not echo response bodies, URLs, headers or exception text: they may contain capabilities.
+            # Read JSON errors even on streaming responses; never echo raw bodies/URLs.
             try:
-                raw = response.json().get("error", {}) if response.is_stream_consumed else {}
+                response.read()
+                data = response.json()
+                raw = data.get("error", {})
                 raw = raw if isinstance(raw, dict) else {}
             except (ValueError, AttributeError):
-                raw = {}
+                raw, data = {}, {}
             status = response.status_code
             has_code = isinstance(raw.get("code"), str)
             code = raw.get("code", "http_" + str(status))
@@ -289,7 +297,22 @@ class MachinesClient:
                 if isinstance(code, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", code)
                 else "api_error"
             )
-            message = "Machines API request failed (HTTP %s)." % status
+            detail = data.get("detail")
+            message = (
+                raw.get("message")
+                or (detail.get("message") if isinstance(detail, dict) else detail)
+                or data.get("message")
+            )
+            if not isinstance(message, str) or not message.strip():
+                message = "Machines API request failed (HTTP %s)." % status
+            # Preserve public diagnostics while redacting credentials and capability URLs.
+            message = message.replace(self.key, "[redacted]")
+            message = re.sub(
+                r"qsm_[A-Za-z0-9_-]+|https?://[^\s]+|wss?://[^\s]+",
+                "[redacted]",
+                message,
+            )
+            message = re.sub(r"(?i)token=[^\s&]+", "token=[redacted]", message)
             exit_code = 2 if status in (401, 403) else 1
             # Agent access disabled: 401 anywhere, or 404 on the account-level endpoints
             # (a 404 on a specific machine ID still means "no such machine").
@@ -299,7 +322,7 @@ class MachinesClient:
             )
             if not has_code and (status == 401 or (status == 404 and account_level)):
                 code = AGENT_ACCESS_DISABLED
-                message = AGENT_ACCESS_MESSAGE
+                message = AGENT_ACCESS_MESSAGE + " " + message
                 exit_code = 2
             raise MachineError(
                 code,
@@ -360,7 +383,9 @@ class MachinesClient:
         )
         if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", request_id):
             raise MachineError(
-                "invalid_request_id", "Request ID must be 16..64 letters, digits or hyphens.", 2
+                "invalid_request_id",
+                "Request ID must be 16..64 letters, digits or hyphens.",
+                2,
             )
         journal[fingerprint] = {"request_id": request_id, **body}
         atomic_write(path, json.dumps(journal), private=True)
@@ -384,7 +409,9 @@ class MachinesClient:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise MachineError(
-                    "wait_timeout", "Wait deadline exceeded; machine was left unchanged.", 124
+                    "wait_timeout",
+                    "Wait deadline exceeded; machine was left unchanged.",
+                    124,
                 )
             try:
                 data = self.request(
@@ -412,19 +439,65 @@ class MachinesClient:
             time.sleep(min(max(0, deadline - time.monotonic()), delay * random.uniform(0.8, 1.2)))
             delay = min(5, delay * 1.5)
 
+    @contextmanager
+    def exec_response(self, mid, body, stream=False):
+        """Retry only an explicit readiness rejection, before handing off any response."""
+        deadline, delay = time.monotonic() + 30, 1
+        for attempt in range(10):
+            self.ensure_active()
+            stack = ExitStack()
+            try:
+                response = stack.enter_context(
+                    self.http.stream(
+                        "POST",
+                        "/v1/machines/" + mid_value(mid) + "/exec",
+                        json=body,
+                        headers={"Accept": "text/event-stream"} if stream else {},
+                        timeout=body["timeout_seconds"] + 10,
+                    )
+                )
+                self.check(response)
+            except MachineError as error:
+                stack.close()
+                # Exact public pre-execution rejection, never a generic conflict or stream error.
+                remaining = deadline - time.monotonic()
+                if (
+                    error.details.get("status_code") != 409
+                    or error.code in ("outcome_unknown", "exec_outcome_unknown")
+                    or error.message
+                    not in ("Machine is not ready.", "Guest runner is not ready.")
+                    or remaining <= 0
+                    or attempt == 9
+                ):
+                    raise
+                time.sleep(min(delay, remaining))
+                delay = min(5, delay * 2)
+                continue
+            except BaseException:
+                stack.close()
+                raise
+            with stack:
+                yield response
+            return
+
     def execute(self, mid, **kwargs):
         body = exec_body(**kwargs)
         try:
-            result = self.request(
-                "POST",
-                "/v1/machines/" + mid_value(mid) + "/exec",
-                json=body,
-                timeout=body["timeout_seconds"] + 10,
+            with self.exec_response(mid, body) as response:
+                response.read()
+                result = response.json()
+                if not isinstance(result, dict):
+                    raise ValueError()
+        except (httpx.HTTPError, ValueError):
+            raise MachineError(
+                "outcome_unknown",
+                "Execution outcome unknown; do not automatically retry.",
             )
         except MachineError as error:
             if error.code in ("transport_error", "invalid_response"):
                 raise MachineError(
-                    "outcome_unknown", "Execution outcome unknown; do not automatically retry."
+                    "outcome_unknown",
+                    "Execution outcome unknown; do not automatically retry.",
                 )
             raise
         if (
@@ -443,7 +516,8 @@ class MachinesClient:
             and not result.get("truncated")
         ):
             raise MachineError(
-                "outcome_unknown", "No terminal execution evidence; do not automatically retry."
+                "outcome_unknown",
+                "No terminal execution evidence; do not automatically retry.",
             )
         return result
 
@@ -452,20 +526,14 @@ class MachinesClient:
         body = exec_body(**kwargs)
         terminal, sequence, total = False, -1, 0
         try:
-            with self.http.stream(
-                "POST",
-                "/v1/machines/" + mid_value(mid) + "/exec",
-                json=body,
-                headers={"Accept": "text/event-stream"},
-                timeout=body["timeout_seconds"] + 10,
-            ) as response:
-                self.check(response)
+            with self.exec_response(mid, body, stream=True) as response:
                 event, chunks, frame_size = "message", [], 0
                 for line in response.iter_lines():
                     frame_size += len(line.encode())
                     if frame_size > MAX_OUTPUT + 65536:
                         raise MachineError(
-                            "output_limit", "Execution stream frame exceeds output limit."
+                            "output_limit",
+                            "Execution stream frame exceeds output limit.",
                         )
                     if line.startswith("event:"):
                         event = line[6:].strip()
@@ -505,11 +573,13 @@ class MachinesClient:
                         event, chunks, frame_size = "message", [], 0
             if not terminal:
                 raise MachineError(
-                    "outcome_unknown", "Execution stream ended without exit evidence; do not retry."
+                    "outcome_unknown",
+                    "Execution stream ended without exit evidence; do not retry.",
                 )
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             raise MachineError(
-                "outcome_unknown", "Execution stream interrupted or malformed; do not retry."
+                "outcome_unknown",
+                "Execution stream interrupted or malformed; do not retry.",
             )
 
     def files(self, mid, path="."):
@@ -536,17 +606,48 @@ class MachinesClient:
         grant = self.request(
             "POST",
             "/v1/machines/" + mid_value(mid) + "/token",
-            json={"purpose": purpose, "client_mode": "cli", **fields},
+            json={"purpose": purpose, **fields},
         )
-        url = grant.get("url", "")
-        parsed = urlsplit(url)
+        host, token = grant.get("host", ""), grant.get("token")
+        parsed = urlsplit(host)
         if (
-            parsed.scheme != ("wss" if purpose == "terminal" else "https")
+            parsed.scheme != "https"
             or not parsed.hostname
             or parsed.username
             or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in ("", "/")
+            or not isinstance(token, str)
+            or not token
         ):
-            raise MachineError("invalid_grant", "API returned an invalid data-plane capability.")
+            raise MachineError(
+                "invalid_grant", "API returned an invalid data-plane capability."
+            )
+        if purpose in ("upload", "download"):
+            resource = grant.get("resource")
+            if resource != fields.get("resource"):
+                raise MachineError(
+                    "invalid_grant", "API returned a different file resource."
+                )
+            grant["url"] = (
+                host.rstrip("/")
+                + "/files/"
+                + mid
+                + "/"
+                + purpose
+                + "?"
+                + urlencode({"path": resource, "token": token})
+            )
+        elif purpose == "terminal":
+            grant["url"] = (
+                "wss://"
+                + parsed.netloc
+                + "/terminal/"
+                + mid
+                + "?"
+                + urlencode({"token": token})
+            )
         return grant
 
     def upload(self, mid, path, source, overwrite=False, limit=MAX_FILE):
@@ -558,12 +659,19 @@ class MachinesClient:
                 break
             size += len(chunk)
             if size > limit:
-                raise MachineError("file_too_large", "File exceeds transfer limit.", 2)
+                raise MachineError(
+                    "file_too_large", "Agent files are limited to 64 MiB.", 2
+                )
             digest.update(chunk)
         source.seek(0)
         checksum = digest.hexdigest()
         grant = self.grant(
-            mid, "upload", path=path, max_bytes=size, sha256=checksum, overwrite=overwrite
+            mid,
+            "upload",
+            resource=path,
+            size=size,
+            sha256=checksum,
+            overwrite=overwrite,
         )
         started = time.monotonic()
 
@@ -605,27 +713,40 @@ class MachinesClient:
 
     def download(self, mid, path, output, limit=MAX_FILE):
         path = workspace_path(path)
-        grant = self.grant(mid, "download", path=path, max_bytes=limit)
-        if type(grant.get("size")) is not int or not isinstance(grant.get("sha256"), str):
-            raise MachineError("invalid_grant", "Download grant requires byte count and checksum.")
-        if grant["size"] > limit:
-            raise MachineError("transfer_limit", "Download exceeds byte limit.")
+        grant = self.grant(mid, "download", resource=path)
         size, digest, started = 0, hashlib.sha256(), time.monotonic()
         try:
             with self.data_client() as data:
                 with data.stream("GET", grant["url"]) as response:
                     self.check(response)
+                    length = response.headers.get("Content-Length", "")
+                    checksum = response.headers.get("X-Checksum-SHA256", "")
+                    if not length.isdigit() or not re.fullmatch(
+                        r"[a-f0-9]{64}", checksum
+                    ):
+                        raise MachineError(
+                            "invalid_response",
+                            "Download requires byte count and SHA-256 headers.",
+                        )
+                    expected_size = int(length)
+                    if expected_size > limit:
+                        raise MachineError(
+                            "transfer_limit",
+                            "Download exceeds byte limit (64 MiB CLI; 256 KiB MCP).",
+                        )
                     for chunk in response.iter_bytes(65536):
                         size += len(chunk)
                         if size > limit or time.monotonic() - started > 300:
                             raise MachineError(
-                                "transfer_limit", "Download exceeded byte limit or deadline."
+                                "transfer_limit",
+                                "Download exceeded byte limit or deadline.",
                             )
                         digest.update(chunk)
                         output.write(chunk)
-            if grant.get("size") != size or grant.get("sha256") != digest.hexdigest():
+            if expected_size != size or checksum != digest.hexdigest():
                 raise MachineError(
-                    "checksum_mismatch", "Download byte count/checksum was not verified."
+                    "checksum_mismatch",
+                    "Download byte count/checksum was not verified.",
                 )
             return {"path": path, "size": size, "sha256": digest.hexdigest()}
         except httpx.HTTPError:

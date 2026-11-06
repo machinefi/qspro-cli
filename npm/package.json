@@ -1,6 +1,6 @@
 {
   "name": "quicksilverpro",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "QuickSilver Pro CLI (qsp): one API for frontier models, and cloud dev boxes your agents can run. Thin npm launcher for the Python CLI.",
   "bin": {
     "quicksilverpro": "bin/qsp.js",

@@ -124,7 +124,7 @@ See [quicksilverpro.io/dashboard#quickstart](https://quicksilverpro.io/dashboard
 
 ## QuickSilver boxes and agent setup (beta)
 
-The 0.5.0 client adds remote Linux boxes with QSP inference preinstalled. The
+The 0.5.2 client adds remote Linux boxes with QSP inference preinstalled. The
 Machines backend and approval page must be enabled for your account; endpoint
 routing and backend integration are release gates. This checkout can be installed
 with `pip install -e '.[mcp,shell]'` (Python 3.10+ for MCP). After release, bootstrap
@@ -154,7 +154,7 @@ No-TTY setup needs an existing Machines key and explicit local-write choices;
 `--yes` does not grant browser authorization, sharing or billing consent. Setup
 creates no box by default. Optional `--create NAME` requires a separate interactive
 confirmation after displaying effective prices/limits. If uv is unavailable,
-install persistently with pipx (`pipx install 'quicksilverpro[mcp,shell]==0.5.0'`)
+install persistently with pipx (`pipx install 'quicksilverpro[mcp,shell]==0.5.2'`)
 or pip, then pass `--no-install-cli`. Skills and MCP configs reference the absolute
 persistent executable for GUI PATH compatibility. Use `--store-key` to explicitly
 persist an environment-supplied Machines key for GUI agents; otherwise those
@@ -181,12 +181,14 @@ unchanged owned assets/entries, preserving unrelated settings and edits.
 remote key revocation remains a browser action.
 
 ```bash
+qsp box ls                           # compact table plus account summary
 qsp box ls --json                    # inspect existing boxes, prices and effective limits
 # Obtain user consent before billable creation/resume.
 qsp box create --name work --wait --json  # prompts for billable creation approval
 # For automation, use --accept-spend only after explicit user approval.
 qsp box get MID --json
 qsp box wait MID --timeout 180 --json
+qsp box exec MID -- python3 --version
 qsp box exec MID --argv-json '["python3","--version"]' --json
 qsp box exec MID --command 'printf hello' --timeout 30 --stream --json
 qsp box cp ./app.py MID:app.py --json
@@ -205,18 +207,28 @@ Use real 12-character hexadecimal machine IDs in place of `MID`. Wait requires
 Create reports its request ID before sending and stores it across lost responses.
 Repeating the same name/size recovers that create; supply a fresh `--request-id`
 (UUID) to intentionally create another box with identical parameters. Mutations
-and execs are never automatically retried. Unknown-outcome execs must be inspected
+are never automatically retried. Exec retries an explicit HTTP 409
+"Machine is not ready." or "Guest runner is not ready." rejection before execution
+with bounded backoff for up to 30 seconds. Generic conflicts, transport failures and
+unknown outcomes are never retried. Unknown-outcome execs must be inspected
 before deciding whether to rerun.
 
 Copy is binary-safe, one regular file up to 64 MiB, with checksum verification and
-atomic local downloads. Paths stay inside `/home/user`; `--overwrite` is explicit.
+atomic local downloads. Oversized uploads fail locally before requesting a token.
+Transfers use scoped host/token grants; downloads verify `Content-Length` and
+`X-Checksum-SHA256`. Paths stay inside `/home/user`; `--overwrite` is explicit.
 Recursive and box-to-box copy are deferred. Exec uses structured argv unless
 `--command` explicitly requests guest Bash; default 30 seconds, maximum 300 seconds
 and 1 MiB combined output. Guest stdout/stderr remain separate in human mode.
+`exec MID -- cmd args...`
+preserves argv literally; put CLI options before `--`. Choose exactly one of this
+form, `--argv-json`, or `--command`.
 
 Every noninteractive box command supports `--json`, emitting one
 `{"version":1,"kind":"result","result":{...}}` object. Errors use
-`kind:"cli_error"` and a structured `error`; guest exits use `kind:"guest_exit"`.
+`kind:"cli_error"` and a structured `error`, including the server message (with
+credentials redacted); human errors print the same message. Guest exits use
+`kind:"guest_exit"`.
 `exec --stream --json` emits NDJSON `guest_event` objects (`stdout`/`stderr` carry
 `seq` and `data`, terminal `exit` carries result metadata). Missing terminal evidence
 is an unknown outcome. Diagnostics go to stderr; file JSON contains metadata only.

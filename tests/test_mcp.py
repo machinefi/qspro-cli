@@ -157,19 +157,26 @@ def test_all_remaining_tools_use_public_api(mock_api):
         if request.url.host == "files.example":
             assert "authorization" not in request.headers
             return (
-                httpx.Response(200, content=data)
+                httpx.Response(
+                    200, content=data, headers={"X-Checksum-SHA256": checksum}
+                )
                 if request.method == "GET"
                 else httpx.Response(200, json={"size": len(data), "sha256": checksum})
             )
         if path.endswith("/token"):
             return httpx.Response(
                 200,
-                json={"url": "https://files.example/cap", "size": len(data), "sha256": checksum},
+                json={
+                    "host": "https://files.example",
+                    "token": "cap",
+                    "resource": json.loads(request.content)["resource"],
+                },
             )
         if path.endswith("/links"):
             assert json.loads(request.content)["mode"] == "owner"
             return httpx.Response(
-                200, json={"url": "https://quicksilverpro.io/dashboard", "access": "owner"}
+                200,
+                json={"url": "https://quicksilverpro.io/dashboard", "access": "owner"},
             )
         if path.endswith("/files"):
             return httpx.Response(200, json={"entries": []})
@@ -196,7 +203,11 @@ def test_all_remaining_tools_use_public_api(mock_api):
     assert (
         dispatch(
             "box_upload",
-            {"mid": MID, "path": "a.bin", "data_base64": base64.b64encode(data).decode()},
+            {
+                "mid": MID,
+                "path": "a.bin",
+                "data_base64": base64.b64encode(data).decode(),
+            },
         )["sha256"]
         == checksum
     )
@@ -227,9 +238,23 @@ def test_mcp_large_files_require_cli(mock_api):
         )
     assert error.value.code == "use_cli_cp"
     mock_api(
-        lambda r: httpx.Response(
-            200,
-            json={"url": "https://files.example/cap", "size": 256 * 1024 + 1, "sha256": "unused"},
+        lambda r: (
+            httpx.Response(
+                200,
+                json={
+                    "host": "https://files.example",
+                    "token": "cap",
+                    "resource": "large.bin",
+                },
+            )
+            if r.url.path.endswith("/token")
+            else httpx.Response(
+                200,
+                headers={
+                    "Content-Length": str(256 * 1024 + 1),
+                    "X-Checksum-SHA256": "0" * 64,
+                },
+            )
         )
     )
     with pytest.raises(MachineError) as error:
