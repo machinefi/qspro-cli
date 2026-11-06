@@ -1,6 +1,6 @@
 # Machines beta client contract (0.5.0)
 
-Machines API origin is configured separately using `QSP_MACHINES_URL` (HTTPS origin only), default `https://api.quicksilverpro.io`. Deployment must verify routing before enabling the beta. No network service is launched by the CLI or MCP server. Commands do not implicitly resume or create replacement machines.
+Machines API origin is configured separately using `QSP_MACHINES_URL` (HTTPS origin only), default `https://pay.quicksilverpro.io`. No network service is launched by the CLI or MCP server. Commands do not implicitly resume or create replacement machines.
 
 | Operation | Public request |
 |---|---|

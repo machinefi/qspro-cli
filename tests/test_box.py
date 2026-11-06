@@ -327,7 +327,7 @@ def test_redirect_never_sends_key_to_another_origin(mock_api):
     result = run("ls", "--json")
     assert result.exit_code == 1
     assert len(calls) == 1
-    assert calls[0].url.host == "api.quicksilverpro.io"
+    assert calls[0].url.host == "pay.quicksilverpro.io"
 
 
 def test_interrupted_sse_closes_stream(mock_api):

@@ -342,7 +342,7 @@ def setup(
             "Open browser sign-in to approve Machines scopes and expiry? Sharing is optional and excluded by default."
         ):
             raise MachineError("auth_required", "Machines-key approval was declined.", 2)
-        webbrowser.open("https://pay.quicksilverpro.io/machines/keys")
+        webbrowser.open("https://quicksilverpro.io/dashboard/machines/#keys")
         key = click.prompt("Paste the separately approved qsm_ key", hide_input=True).strip()
         with MachinesClient(key=key) as client:
             client.auth()
