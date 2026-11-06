@@ -1,0 +1,17 @@
+{
+  "name": "quicksilverpro",
+  "version": "0.5.1",
+  "description": "QuickSilver Pro CLI (qsp): one API for frontier models, and cloud dev boxes your agents can run. Thin npm launcher for the Python CLI.",
+  "bin": {
+    "quicksilverpro": "bin/qsp.js",
+    "qsp": "bin/qsp.js"
+  },
+  "files": ["bin/", "README.md"],
+  "engines": { "node": ">=18" },
+  "keywords": ["quicksilver", "llm", "openai-compatible", "claude-code", "codex", "mcp", "dev-box", "agents", "cli"],
+  "homepage": "https://quicksilverpro.io/docs/machines/cli/",
+  "repository": { "type": "git", "url": "git+https://github.com/machinefi/qspro-cli.git", "directory": "npm" },
+  "bugs": "https://github.com/machinefi/qspro-cli/issues",
+  "license": "MIT",
+  "author": "MachineFi Inc."
+}
