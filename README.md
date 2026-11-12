@@ -340,3 +340,51 @@ Retryable pre-exec failures include `exec_concurrency_limit` (429),
 `Retry-After` header. `exec_outcome_unknown` and `job_outcome_unknown` must never
 be retried automatically. MCP equivalents are `box_job_start`, `box_job_list`,
 `box_job_status`, `box_job_logs` (bounded polling), and `box_job_kill`.
+
+
+## Editor SSH
+
+Install with `pipx install quicksilverpro`, or run `npx quicksilverpro setup` to configure your Machines credential.
+Requires Python 3.10+, OpenSSH (`ssh`, `ssh-keygen`), and macOS or Linux.
+Use an account-wide Machines credential from `qsp setup` (or `QSP_MACHINES_KEY`) with `machines:connect`,
+`machines:read`, and `machines:resume`. Inference API keys are a different authority and do not work.
+Do not put credentials into SSH config or ProxyCommand arguments.
+
+```sh
+qsp box ssh-config                  # all account machines
+qsp box ssh-config my-machine       # name or machine ID
+qsp box ssh my-machine              # setup and interactive login
+ssh qsp-my-machine
+ssh -L 3000:localhost:3000 qsp-my-machine
+```
+
+Setup creates `~/.ssh/qsp_ed25519` if missing, registers its public key for the
+account, and updates marked machine blocks in `~/.ssh/config`. It preserves
+unrelated config and also creates an ID alias (`qsp-<id>`). ID-shaped names
+are reserved for machine IDs. Ambiguous normalized name aliases are omitted,
+including across incremental setup; connect to those machines by ID. Install the CLI in a stable PATH visible to desktop apps.
+For an existing account key, the transport also works with your own config:
+`ProxyCommand qsp box ssh-proxy <id>` and `User user`.
+
+VS Code / Cursor: Remote-SSH → Connect to Host. Zed: Remote Projects → Connect
+via SSH. JetBrains Gateway: create an SSH connection from your SSH config.
+Orca and desktop agents can use this host when they support OpenSSH
+ProxyCommand; support is application dependent. The setup command must run on
+the same computer as the editor's SSH client.
+
+The proxy resumes paused machines and waits up to ten minutes, printing progress
+only to stderr. Automatic resume uses credits. All stdout is raw SSH bytes.
+The tunnel uses HTTPS/WebSocket; no public SSH port is required. Port forwarding,
+SFTP, and editor installation use the normal SSH protocol.
+Host keys are supplied through the authenticated control API and pinned to the
+machine ID in `~/.ssh/qsp_known_hosts`; a cold boot may rotate them. Verification
+stays strict. The proxy refreshes this pin before OpenSSH checks the remote key.
+
+SSH traffic counts as idle activity. QSP does not generate SSH application keepalives; transport liveness uses WebSocket ping/pong. Editor or custom SSH keepalives count as traffic and can keep billing active until the session limit. Automatic editor reconnects can resume paused machines and start another billable session. An idle connection alone does not keep a
+machine awake. SSH never acquires human control, and follows the same gate as
+agent terminals: connections are refused/closed when human control is held.
+Guest processes already started remain independent of the gate. Four SSH
+connections per machine and existing account/IP/global stream limits apply.
+Key removal stops new authentication, not existing SSH sessions. Retry a failed
+key update to complete propagation to all machines; SSH tickets resync the current
+account keys before allowing a connection.

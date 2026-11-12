@@ -119,3 +119,17 @@ Retryable pre-exec failures include `exec_concurrency_limit` (429),
 `Retry-After` header. `exec_outcome_unknown` and `job_outcome_unknown` must never
 be retried automatically. MCP equivalents are `box_job_start`, `box_job_list`,
 `box_job_status`, `box_job_logs` (bounded polling), and `box_job_kill`.
+
+
+## Editor SSH
+
+`box_ssh_info` (read only) returns `qsp box ssh-config MID` and the stable
+`qsp-MID` host alias. It never changes local files, registers keys, or resumes.
+`qsp box ssh-config [MID|NAME]` registers the local public key and writes managed
+OpenSSH host blocks; `qsp box ssh` also connects. `ssh-proxy` is binary stdio for
+ProxyCommand. Connecting a paused machine resumes billing automatically; obtain
+the user's spend authorization before invoking SSH from an agent. The API's
+`ssh` token purpose requires `machines:connect`. Account `/ssh-keys` management
+also requires account-wide authority; machine-ID-restricted keys cannot change
+account keys. Keys authenticate only the guest `user` account. SSH follows the
+agent human-control gate without acquiring it; guest processes are independent.

@@ -37,6 +37,7 @@ dependencies = [
   "click>=8.1",
   "httpx>=0.25",
   "rich>=13",
+  "websockets==15.0.1",
   "tomlkit>=0.13,<1",
 ]
 
