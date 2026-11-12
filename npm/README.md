@@ -84,3 +84,14 @@ Editor SSH: after setup, run `npx quicksilverpro box ssh-config <machine>` once.
 Use a stable installed `qsp` executable for your editor's ProxyCommand (`pipx install quicksilverpro`).
 `qsp box ssh <machine>` connects interactively; `ssh -L` forwarding works. Connecting a
 paused box resumes billing. The bundled MCP `box_ssh_info` tool returns local setup instructions.
+
+
+## Machine cloning
+
+`npx quicksilverpro box clone <machine> --from-snapshot <id-or-name> --name worker --count 2 --accept-spend --json`
+creates independent copies of a configured machine. Omit `--from-snapshot` for
+its current disks. Everything on disk is copied, including credentials you saved;
+applications boot fresh with a new machine identity and QuickSilver AI key.
+The Python MCP server used by `npx quicksilverpro setup` exposes `box_clone` with
+name, count, snapshot, request ID and explicit spend approval. Each duplicate
+counts toward account limits and is billed separately while running.
