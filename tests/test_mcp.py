@@ -19,7 +19,7 @@ def test_sdk_tool_calls_and_schemas(mock_api):
     async def scenario():
         async with create_connected_server_and_client_session(create_server()) as session:
             tools = (await session.list_tools()).tools
-            assert len(tools) == len(SCHEMAS) == 17
+            assert len(tools) == len(SCHEMAS) == 18
             assert all(
                 t.inputSchema["additionalProperties"] is False and t.outputSchema for t in tools
             )
@@ -79,7 +79,7 @@ def test_real_stdio_protocol_no_credentials(tmp_path):
         async with stdio_client(params) as (reader, writer):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()
-                assert len((await session.list_tools()).tools) == 17
+                assert len((await session.list_tools()).tools) == 18
                 result = await session.call_tool("box_list", {})
                 assert result.isError
                 assert result.structuredContent["error"]["code"] == "auth_required"

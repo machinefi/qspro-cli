@@ -78,3 +78,9 @@ Retryable pre-exec failures include `exec_concurrency_limit` (429),
 `Retry-After` header. `exec_outcome_unknown` and `job_outcome_unknown` must never
 be retried automatically. MCP equivalents are `box_job_start`, `box_job_list`,
 `box_job_status`, `box_job_logs` (bounded polling), and `box_job_kill`.
+
+
+Editor SSH: after setup, run `npx quicksilverpro box ssh-config <machine>` once.
+Use a stable installed `qsp` executable for your editor's ProxyCommand (`pipx install quicksilverpro`).
+`qsp box ssh <machine>` connects interactively; `ssh -L` forwarding works. Connecting a
+paused box resumes billing. The bundled MCP `box_ssh_info` tool returns local setup instructions.

@@ -7,6 +7,7 @@ import os
 import stat
 import sys
 import tempfile
+import subprocess
 import webbrowser
 from contextlib import closing
 from pathlib import Path
@@ -449,3 +450,28 @@ def job_logs(mid, job_id, follow, stream, offset, tail, as_json):
         for event in events:
             if as_json:emit(event,True,'job_logs')
             else:click.echo(base64.b64decode(event['data']).decode('utf-8',errors='replace'),nl=False,err=stream=='stderr')
+
+
+@box.command('ssh-config',help='Register a local SSH key and configure editor hosts. Applies to all boxes by default.')
+@click.argument('machine',required=False)
+def ssh_config(machine):
+    from .ssh import configure
+    try:configure(machine)
+    except (ValueError,subprocess.SubprocessError):raise MachineError('ssh_setup','SSH setup failed. Check your machine, local key, and OpenSSH installation.') from None
+
+
+@box.command('ssh',help='Configure and open SSH. Paused boxes resume automatically and use credits.')
+@click.argument('machine')
+def ssh_command(machine):
+    from .ssh import interactive
+    try:interactive(machine)
+    except (ValueError,subprocess.SubprocessError):raise MachineError('ssh_setup','SSH setup failed. Check your machine, local key, and OpenSSH installation.') from None
+
+
+@box.command('ssh-proxy',help='Binary SSH ProxyCommand transport. Resumes paused boxes and uses credits; diagnostics go to stderr.')
+@click.argument('machine')
+def ssh_proxy(machine):
+    from .ssh import proxy
+    try:proxy(machine)
+    except MachineError:raise
+    except (ValueError,OSError):raise MachineError('ssh_setup','SSH setup failed. Check your machine and local SSH configuration.') from None
