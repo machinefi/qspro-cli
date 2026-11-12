@@ -1,4 +1,4 @@
-# Machines beta client contract (0.5.2)
+# Machines beta client contract (0.6.0)
 
 Machines API origin is configured separately using `QSP_MACHINES_URL` (HTTPS origin only), default `https://pay.quicksilverpro.io`. No network service is launched by the CLI or MCP server. Commands do not implicitly resume or create replacement machines.
 
@@ -32,7 +32,7 @@ The terminal adapter builds `wss://${host}/terminal/${mid}?token=...`; interacti
 
 ## Local MCP
 
-Install `quicksilverpro[mcp]==0.5.2` with Python >=3.10; SDK pinned to `mcp==1.25.0` (SDK negotiates supported protocol versions). `qsp mcp` is stdio only and resolves credentials itself. No secrets in agent config. `qsp mcp --check` verifies the installation without starting stdio. Protocol cancellation closes the active API/file transports; backend disconnect handling must cancel the guest job tree. Tools: `box_create/list/get/wait/exec/files_list/upload/download/pause/resume/delete/open`.
+Install `quicksilverpro[mcp]==0.6.0` with Python >=3.10; SDK pinned to `mcp==1.25.0` (SDK negotiates supported protocol versions). `qsp mcp` is stdio only and resolves credentials itself. No secrets in agent config. `qsp mcp --check` verifies the installation without starting stdio. Protocol cancellation closes the active API/file transports; backend disconnect handling must cancel the guest job tree. Tools: `box_create/list/get/wait/exec/files_list/upload/download/pause/resume/delete/open`.
 
 Input schemas and common output envelope schema are published in `quicksilverpro.mcp`. Inputs forbid unknown properties, require MID `^[a-f0-9]{12}$`, and expand all aliases. CLI create/resume display effective prices and limits on stderr and require interactive confirmation (default no) or `--accept-spend`; headless calls without the flag fail with exit 2 and `consent_required`. Agents must show the returned prices/limits and obtain explicit user approval before passing the flag. MCP `box_create` and `box_resume` require `accept_spend:true`; call `box_list`, present its prices/limits and obtain user approval before setting it. Missing or false approval returns `isError:true` with `consent_required` without creating or resuming (nothing is written to the create-request journal). If the account lacks Machines agent access (HTTP 401, or 404 on `/v1/machines`/`/v1/machines/auth`, with no API error code) the client reports error code `agent_access_disabled`. Delete requires matching `mid` and `confirm_mid`. Open defaults to owner/desktop/300 seconds, with explicit share mode and 60..900-second expiry. MCP output uses `structuredContent` and `isError:true` for failures. Exact backend-generated per-operation output schemas remain an integration requirement pending the backend OpenAPI export; the client currently publishes an envelope with public API result objects.
 
@@ -48,3 +48,74 @@ Setup installs versioned skills and hashed entries; run `qsp box doctor` to insp
 - Antigravity: generic CLI/skill instructions and manual MCP snippet; no guessed configuration files.
 
 Only the SDK's own client/server handshake is tested automatically; actual agent/version discovery remains a release gate.
+
+## Detached jobs
+
+
+For interactive commands, request `Accept: text/event-stream` on
+`POST /v1/machines/{mid}/exec`. Streams include `: keepalive` comments every
+15 seconds, including while commands are quiet. Ignore comment frames. Exec
+still has a 300-second total lifetime and stops its entire process group when
+the client disconnects. Buffered requests with `timeout_seconds > 90` are
+rejected before execution; use streaming or jobs. The CLI and MCP client
+select streaming automatically for timeouts over 60 seconds.
+
+For work that must survive a disconnected client, use detached jobs:
+
+```sh
+qsp box job start MACHINE_ID --command 'pytest > results.txt' --timeout 86400
+qsp box job ls MACHINE_ID
+qsp box job status MACHINE_ID JOB_ID
+qsp box job logs MACHINE_ID JOB_ID --tail 4096
+qsp box job logs MACHINE_ID JOB_ID -f --stream stderr
+qsp box job kill MACHINE_ID JOB_ID
+```
+
+`start` also accepts argv after `--`, `--argv-json`, `--cwd`, and repeatable
+`--env KEY=VALUE`. Commands run as `user`, inside `/home/user`, with the same
+environment restrictions as exec. Shell syntax requires explicit `command`.
+Do not use `nohup` or `&` inside exec to detach work.
+
+| Method | Path | Scope | Input/result |
+| --- | --- | --- | --- |
+| POST | `/v1/machines/{mid}/jobs` | `machines:exec` | Exec body; `timeout_seconds` defaults to 86400, max 259200; returns job status |
+| GET | `/v1/machines/{mid}/jobs` | `machines:read` | `{jobs: [...]}` |
+| GET | `/v1/machines/{mid}/jobs/{jid}` | `machines:read` | Status |
+| GET | `/v1/machines/{mid}/jobs/{jid}/logs` | `machines:read` | `stream=stdout|stderr`, `offset`, optional `tail` (0–65536 bytes), `follow=true` for SSE |
+| POST | `/v1/machines/{mid}/jobs/{jid}/kill` | `machines:exec` | Stops the job and its descendants |
+
+Dashboard sessions and scoped Machines keys use the existing ownership, machine
+restriction and human-control gates. Job operations do not create or resume a
+machine. Status contains `id`, `state` (`running`, `exited`, `killed`, `lost`),
+`exit_code`, Unix `started_at`/`ended_at`, and `max_runtime_seconds`. A killed or
+lost job may have no exit code. Starts are not idempotent: after an unknown
+outcome, list jobs before deciding whether to start again.
+
+Logs retain a circular 1 MiB per stream (2 MiB total per job). Responses
+contain base64 `data` and absolute byte cursors `offset`, `next_offset`,
+`start_offset`, `end_offset`. Each read returns at most 64 KiB. If a cursor is
+older than retained data, `offset` advances to `start_offset`; clients can detect
+the gap. Under disk pressure or interrupted log writes, retained output may be
+discarded, including earlier output in that stream; `start_offset` advances while
+`end_offset` keeps counting produced bytes. Empty terminal logs advance to the
+end so followers can finish. Poll `next_offset`, or follow SSE `logs` events with keepalive comments.
+Disconnecting log follow never kills a detached job. Clients may reconnect using
+the last cursor when authority refresh closes a follow stream. Logs are untrusted
+command output. Keep durable artifacts in the workspace. At most eight jobs run
+at once; history retains the latest 256 jobs, evicting the oldest completed job
+on the next start.
+
+Running jobs count as activity even while quiet, preventing idle auto-pause.
+Billing enforcement, the machine session runtime cap, and explicit owner pause
+still apply. Memory pause freezes jobs; restoring that memory within its
+24-hour retention resumes them. The guest service runtime limit uses the guest
+clock; it does not imply a 24-hour uninterrupted billable machine session.
+Cold restarts, Sleeping, expired memory checkpoints and named snapshot restores
+lose processes: old running records become `lost` when inspected. Paused status
+is the manager's last observed status; logs require a running machine.
+
+Retryable pre-exec failures include `exec_concurrency_limit` (429),
+`runner_not_ready` (409), and `exec_slot_race` (409). Check `retry_after` and the
+`Retry-After` header. `exec_outcome_unknown` and `job_outcome_unknown` must never
+be retried automatically. MCP equivalents are `box_job_start`, `box_job_list`,
+`box_job_status`, `box_job_logs` (bounded polling), and `box_job_kill`.

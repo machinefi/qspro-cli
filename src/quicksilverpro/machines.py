@@ -155,7 +155,7 @@ def workspace_path(path):
     return str(PurePosixPath(path))
 
 
-def exec_body(argv=None, command=None, cwd=None, timeout_seconds=30, env=None):
+def exec_body(argv=None, command=None, cwd=None, timeout_seconds=30, env=None, _max_timeout=300):
     if (argv is None) == (command is None):
         raise MachineError("invalid_exec", "Provide exactly one of argv or command.", 2)
     if argv is not None and (
@@ -170,8 +170,8 @@ def exec_body(argv=None, command=None, cwd=None, timeout_seconds=30, env=None):
         raise MachineError(
             "invalid_exec", "command must contain 1..32768 characters without NUL.", 2
         )
-    if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 300:
-        raise MachineError("invalid_exec", "Exec timeout must be 1..300 seconds.", 2)
+    if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= _max_timeout:
+        raise MachineError("invalid_exec", "Runtime must be 1..%s seconds." % _max_timeout, 2)
     body = {"timeout_seconds": timeout_seconds}
     body["argv" if argv is not None else "command"] = (
         argv if argv is not None else command
@@ -462,10 +462,10 @@ class MachinesClient:
                 # Exact public pre-execution rejection, never a generic conflict or stream error.
                 remaining = deadline - time.monotonic()
                 if (
-                    error.details.get("status_code") != 409
+                    error.details.get("status_code") not in (409, 429)
                     or error.code in ("outcome_unknown", "exec_outcome_unknown")
-                    or error.message
-                    not in ("Machine is not ready.", "Guest runner is not ready.")
+                    or (error.code not in ('runner_not_ready', 'exec_slot_race', 'exec_concurrency_limit') and error.message
+                    not in ("Machine is not ready.", "Guest runner is not ready."))
                     or remaining <= 0
                     or attempt == 9
                 ):
@@ -482,6 +482,14 @@ class MachinesClient:
 
     def execute(self, mid, **kwargs):
         body = exec_body(**kwargs)
+        if body['timeout_seconds'] > 60:
+            result = None
+            output = {'stdout': [], 'stderr': []}
+            for event in self.events(mid, **kwargs):
+                if event['event'] in output:output[event['event']].append(event['data'])
+                elif event['event'] == 'exit':result = event
+            if result is None:raise MachineError('outcome_unknown', 'Missing execution exit evidence.')
+            return {**{k:v for k,v in result.items() if k not in ('event','seq')}, **{k:''.join(v) for k,v in output.items()}}
         try:
             with self.exec_response(mid, body) as response:
                 response.read()
@@ -535,6 +543,8 @@ class MachinesClient:
                             "output_limit",
                             "Execution stream frame exceeds output limit.",
                         )
+                    if not line and not chunks:
+                        event, frame_size = 'message', 0
                     if line.startswith("event:"):
                         event = line[6:].strip()
                     elif line.startswith("data:"):
@@ -581,6 +591,43 @@ class MachinesClient:
                 "outcome_unknown",
                 "Execution stream interrupted or malformed; do not retry.",
             )
+
+    def job_start(self, mid, **kwargs):
+        kwargs.setdefault('timeout_seconds', 86400)
+        body = exec_body(**kwargs, _max_timeout=259200)
+        return self.request('POST', '/v1/machines/' + mid_value(mid) + '/jobs', json=body)
+
+    def job(self, mid, action='list', job_id=None, **options):
+        path = '/v1/machines/' + mid_value(mid) + '/jobs'
+        if action != 'list':
+            if not isinstance(job_id, str) or not re.fullmatch('[a-f0-9]{32}', job_id):
+                raise MachineError('invalid_job', 'Invalid job ID.', 2)
+            path += '/' + job_id
+        if action in ('kill', 'logs'):path += '/' + action
+        if action not in ('list', 'status', 'kill', 'logs'):
+            raise MachineError('invalid_job', 'Invalid job operation.', 2)
+        return self.request('POST' if action == 'kill' else 'GET', path, **({'json':{}} if action == 'kill' else {'params':options} if options else {}))
+
+    def job_follow(self, mid, job_id, **options):
+        import base64
+        if not re.fullmatch('[a-f0-9]{32}', job_id):raise MachineError('invalid_job', 'Invalid job ID.', 2)
+        self.ensure_active()
+        path = '/v1/machines/' + mid_value(mid) + '/jobs/' + job_id + '/logs'
+        # Reconnect with the absolute cursor: following never starts new work.
+        try:
+            while True:
+                with self.http.stream('GET', path, params={**options, 'follow':'true'}, timeout=35) as response:
+                    self.check(response)
+                    for line in response.iter_lines():
+                        if line.startswith('data: '):
+                            if len(line)>131072:raise MachineError('output_limit', 'Invalid job log frame.')
+                            event=json.loads(line[6:]);base64.b64decode(event['data'],validate=True)
+                            options.pop('tail',None);options['offset']=event['next_offset']
+                            yield event
+                            if event['state']!='running' and event['next_offset']>=event['end_offset']:return
+                self.ensure_active()
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            raise MachineError('job_logs_interrupted', 'Job log stream interrupted; resume from the last next_offset.', next_offset=options.get('offset',0)) from None
 
     def files(self, mid, path="."):
         return self.request(

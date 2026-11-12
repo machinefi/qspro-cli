@@ -222,7 +222,7 @@ def execute(mid, guest_argv, argv_json, command, cwd, timeout, stream, as_json):
         argv = list(guest_argv)
     with MachinesClient() as client:
         args = dict(argv=argv, command=command, cwd=cwd, timeout_seconds=timeout)
-        if stream:
+        if stream or (timeout > 60 and not as_json):
             result = None
             with closing(client.events(mid, **args)) as events:
                 for event in events:
@@ -388,3 +388,64 @@ def doctor(mid, as_json):
         if mid:
             result["machine"] = client.get(mid)
         emit(result, as_json)
+
+
+@box.group('job', help='Run and inspect work that survives a disconnected client.')
+def job():
+    pass
+
+@job.command('start')
+@click.argument('mid')
+@click.argument('guest_argv', nargs=-1, type=click.UNPROCESSED)
+@click.option('--argv-json')
+@click.option('--command')
+@click.option('--cwd')
+@click.option('--env', 'env_values', multiple=True, help='KEY=VALUE environment override; repeatable.')
+@click.option('--timeout', type=click.IntRange(1,259200), default=86400, show_default=True)
+@json_option
+def job_start(mid, guest_argv, argv_json, command, cwd, env_values, timeout, as_json):
+    try:
+        argv=json.loads(argv_json) if argv_json is not None else list(guest_argv) if guest_argv else None
+        if argv_json is not None and guest_argv:raise ValueError()
+        env=dict(value.split('=',1) for value in env_values)
+    except ValueError:raise click.UsageError('Choose valid argv JSON or argv after --; env must be KEY=VALUE.')
+    with MachinesClient() as client:
+        emit(client.job_start(mid,argv=argv,command=command,cwd=cwd,env=env,timeout_seconds=timeout),as_json)
+
+@job.command('ls')
+@click.argument('mid')
+@json_option
+def job_list(mid, as_json):
+    with MachinesClient() as client:emit(client.job(mid),as_json)
+
+@job.command('status')
+@click.argument('mid')
+@click.argument('job_id')
+@json_option
+def job_status(mid, job_id, as_json):
+    with MachinesClient() as client:emit(client.job(mid,'status',job_id),as_json)
+
+@job.command('kill')
+@click.argument('mid')
+@click.argument('job_id')
+@json_option
+def job_kill(mid, job_id, as_json):
+    with MachinesClient() as client:emit(client.job(mid,'kill',job_id),as_json)
+
+@job.command('logs')
+@click.argument('mid')
+@click.argument('job_id')
+@click.option('--follow','-f',is_flag=True)
+@click.option('--stream',type=click.Choice(['stdout','stderr']),default='stdout')
+@click.option('--offset',type=click.IntRange(0),default=0)
+@click.option('--tail',type=click.IntRange(0,65536))
+@json_option
+def job_logs(mid, job_id, follow, stream, offset, tail, as_json):
+    import base64
+    options={'stream':stream,'offset':offset}
+    if tail is not None:options['tail']=tail
+    with MachinesClient() as client:
+        events=client.job_follow(mid,job_id,**options) if follow else iter([client.job(mid,'logs',job_id,**options)])
+        for event in events:
+            if as_json:emit(event,True,'job_logs')
+            else:click.echo(base64.b64decode(event['data']).decode('utf-8',errors='replace'),nl=False,err=stream=='stderr')

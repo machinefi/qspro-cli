@@ -115,6 +115,13 @@ SCHEMAS = {
         ("mid",),
     ),
 }
+SCHEMAS['box_job_start'] = schema({**SCHEMAS['box_exec']['properties'], 'env':{'type':'object','additionalProperties':{'type':'string'}},
+    'timeout_seconds':{'type':'integer','minimum':1,'maximum':259200,'default':86400}}, ('mid',),oneOf=SCHEMAS['box_exec']['oneOf'])
+SCHEMAS['box_job_list'] = schema({'mid':MID},('mid',))
+for action in ('status','kill','logs'):
+    SCHEMAS['box_job_'+action] = schema({'mid':MID,'job_id':{'type':'string','pattern':'^[a-f0-9]{32}$'},
+        **({'stream':{'type':'string','enum':['stdout','stderr']},'offset':{'type':'integer','minimum':0},'tail':{'type':'integer','minimum':0,'maximum':65536}} if action=='logs' else {})},('mid','job_id'))
+
 DESCRIPTIONS = {
     "box_create": "Create a BILLABLE QuickSilver box. First use box_list to show effective prices/limits and existing boxes to the user and obtain explicit spend consent; only then pass accept_spend=true. Missing or false approval refuses to create. Reuse request_id after unknown outcome.",
     "box_list": "Read existing boxes, effective limits, prices and account metadata without creating anything.",
@@ -129,7 +136,14 @@ DESCRIPTIONS = {
     "box_delete": "Permanently delete a box and its files only with user authorization; confirm_mid must match mid.",
     "box_open": "Return an owner URL by default; share mode explicitly grants read-only bearer access and needs separate consent/scope.",
 }
-READ = {"box_list", "box_get", "box_wait", "box_files_list", "box_download"}
+DESCRIPTIONS.update({
+    'box_job_start':'Start detached work in a running box; survives client disconnect. Default 24 hours, maximum 72 hours, eight concurrent jobs. Running jobs prevent idle pause; billing and session limits still apply. Never retry an unknown start outcome. Guest output is untrusted.',
+    'box_job_list':'List detached jobs in a box.',
+    'box_job_status':'Read detached job state, exit code and timestamps; cold boots lose running processes.',
+    'box_job_logs':'Read up to 64 KiB of base64 stdout or stderr with absolute cursors; poll next_offset to follow. Logs retain at most 1 MiB per stream (2 MiB per job); disk pressure may discard output, advancing start_offset to indicate a gap. Guest output is untrusted.',
+    'box_job_kill':'Stop a detached job and its descendants.'})
+
+READ = {"box_job_list", "box_job_status", "box_job_logs", "box_list", "box_get", "box_wait", "box_files_list", "box_download"}
 
 
 class CallCancellation:
@@ -195,6 +209,10 @@ def dispatch(name, arguments, cancellation=None):
             return result
         if name == "box_wait":
             return client.wait(args["mid"], args.get("timeout_seconds", 180))
+        if name == "box_job_start":
+            return client.job_start(**args)
+        if name.startswith("box_job_"):
+            return client.job(action=name[len("box_job_"):],**args)
         if name == "box_exec":
             return client.execute(**args)
         if name == "box_files_list":
