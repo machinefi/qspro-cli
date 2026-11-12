@@ -58,3 +58,27 @@ def test_mcp_job_dispatch():
     with patch('quicksilverpro.mcp.MachinesClient',return_value=fake):
         assert dispatch('box_job_start',{'mid':MID,'command':'sleep 1000'})=={'id':JID}
     assert set(k for k in SCHEMAS if k.startswith('box_job_'))=={'box_job_start','box_job_list','box_job_status','box_job_logs','box_job_kill'}
+
+
+def test_follow_gap_and_empty_terminal_log_finish_without_reconnect():
+    calls=[]
+    def handler(req):
+        calls.append(req)
+        event={'stream':'stdout','data':'','offset':23,'next_offset':23,'start_offset':23,'end_offset':23,'state':'exited'}
+        return httpx.Response(200,text='event: logs\ndata: '+json.dumps(event)+'\n\n')
+    with client(handler) as c:
+        events=list(c.job_follow(MID,JID,offset=7))
+    assert len(calls)==1 and len(events)==1
+    assert events[0]['offset']>7 and events[0]['next_offset']==events[0]['end_offset']
+
+
+def test_job_retention_documentation():
+    from pathlib import Path
+    from quicksilverpro.mcp import DESCRIPTIONS
+    root=Path(__file__).parents[1]
+    for file in (root/'README.md',root/'src/quicksilverpro/skills/quicksilver-machines/references/api.md'):
+        doc=file.read_text()
+        assert '1 MiB per stream (2 MiB total per job)' in doc
+        assert '`end_offset` keeps counting produced bytes' in doc
+        assert '25 MiB' not in doc
+    assert 'disk pressure may discard output' in DESCRIPTIONS['box_job_logs']

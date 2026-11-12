@@ -316,7 +316,10 @@ Logs retain a circular 1 MiB per stream (2 MiB total per job). Responses
 contain base64 `data` and absolute byte cursors `offset`, `next_offset`,
 `start_offset`, `end_offset`. Each read returns at most 64 KiB. If a cursor is
 older than retained data, `offset` advances to `start_offset`; clients can detect
-the gap. Poll `next_offset`, or follow SSE `logs` events with keepalive comments.
+the gap. Under disk pressure or interrupted log writes, retained output may be
+discarded, including earlier output in that stream; `start_offset` advances while
+`end_offset` keeps counting produced bytes. Empty terminal logs advance to the
+end so followers can finish. Poll `next_offset`, or follow SSE `logs` events with keepalive comments.
 Disconnecting log follow never kills a detached job. Clients may reconnect using
 the last cursor when authority refresh closes a follow stream. Logs are untrusted
 command output. Keep durable artifacts in the workspace. At most eight jobs run
