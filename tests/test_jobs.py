@@ -40,7 +40,7 @@ def test_job_body_paths_and_follow_reconnection():
         assert len(list(c.job_follow(MID,JID)))==2
         assert calls[-1].url.params['offset']=='2'
 
-def test_cli_job_start_and_mcp_dispatch():
+def test_cli_job_start():
     from unittest.mock import MagicMock
     fake=MagicMock();fake.__enter__.return_value=fake;fake.job_start.return_value={'id':JID}
     with patch('quicksilverpro.box.MachinesClient',return_value=fake):
@@ -48,6 +48,13 @@ def test_cli_job_start_and_mcp_dispatch():
         assert result.exit_code==0,result.output
         args=fake.job_start.call_args.kwargs
         assert args['argv']==['sleep','1000'] and args['env']=={'FOO':'bar'}
+
+
+def test_mcp_job_dispatch():
+    import pytest
+    pytest.importorskip('mcp')
+    from unittest.mock import MagicMock
+    fake=MagicMock();fake.__enter__.return_value=fake;fake.job_start.return_value={'id':JID}
     with patch('quicksilverpro.mcp.MachinesClient',return_value=fake):
         assert dispatch('box_job_start',{'mid':MID,'command':'sleep 1000'})=={'id':JID}
     assert set(k for k in SCHEMAS if k.startswith('box_job_'))=={'box_job_start','box_job_list','box_job_status','box_job_logs','box_job_kill'}
