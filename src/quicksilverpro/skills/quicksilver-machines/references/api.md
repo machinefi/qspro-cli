@@ -91,7 +91,7 @@ machine. Status contains `id`, `state` (`running`, `exited`, `killed`, `lost`),
 lost job may have no exit code. Starts are not idempotent: after an unknown
 outcome, list jobs before deciding whether to start again.
 
-Logs retain a circular 25 MiB per stream (50 MiB total per job). Responses
+Logs retain a circular 1 MiB per stream (2 MiB total per job). Responses
 contain base64 `data` and absolute byte cursors `offset`, `next_offset`,
 `start_offset`, `end_offset`. Each read returns at most 64 KiB. If a cursor is
 older than retained data, `offset` advances to `start_offset`; clients can detect
