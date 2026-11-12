@@ -39,6 +39,14 @@ def schema(properties, required=(), **extra):
 
 
 SCHEMAS = {
+    "box_clone": schema({
+        "mid": MID,
+        "name": {"type": "string", "minLength": 1, "maxLength": 64},
+        "from_snapshot": {"type": "string", "minLength": 1, "maxLength": 80},
+        "count": {"type": "integer", "minimum": 1, "maximum": 64, "default": 1},
+        "request_id": {"type": "string", "pattern": "^[a-zA-Z0-9-]{16,64}$"},
+        "accept_spend": {"type": "boolean", "default": False},
+    }, ("mid", "request_id")),
     "box_create": schema(
         {
             "name": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -124,6 +132,7 @@ for action in ('status','kill','logs'):
         **({'stream':{'type':'string','enum':['stdout','stderr']},'offset':{'type':'integer','minimum':0},'tail':{'type':'integer','minimum':0,'maximum':65536}} if action=='logs' else {})},('mid','job_id'))
 
 DESCRIPTIONS = {
+    "box_clone": "Duplicate both disks into new BILLABLE boxes with fresh identities and QuickSilver AI keys. Everything on disk, including user-saved credentials and logins, is copied. Applications boot fresh; share links are cleared. Show box_list prices/limits and obtain spend approval before accept_spend=true. Reuse request_id after an unknown or partial outcome; inspect machines AND error. Count is bounded by the account limit.",
     "box_create": "Create a BILLABLE QuickSilver box. First use box_list to show effective prices/limits and existing boxes to the user and obtain explicit spend consent; only then pass accept_spend=true. Missing or false approval refuses to create. Reuse request_id after unknown outcome.",
     "box_list": "Read existing boxes, effective limits, prices and account metadata without creating anything.",
     "box_ssh_info": "Return local SSH/editor setup instructions. Does not write files, register keys, or resume a box. Run the returned command locally to set up SSH; connecting a paused box resumes billing.",
@@ -185,9 +194,9 @@ def dispatch(name, arguments, cancellation=None):
     args = dict(arguments)
     if name == "box_delete" and args["mid"] != args["confirm_mid"]:
         raise MachineError("confirmation_required", "confirm_mid must equal mid.", 2)
-    if name in ("box_create", "box_resume"):
+    if name in ("box_create", "box_resume", "box_clone"):
         if not args.pop("accept_spend", False):
-            operation = "creation" if name == "box_create" else "resume"
+            operation = "creation" if name in ("box_create", "box_clone") else "resume"
             raise MachineError(
                 "consent_required",
                 f"Billable {operation} requires accept_spend=true after showing prices/limits and obtaining explicit user approval.",
@@ -204,6 +213,8 @@ def dispatch(name, arguments, cancellation=None):
                     "ssh_host":"qsp-"+machine["id"],"user":"user","auto_resume_uses_credits":True}
         if name == "box_get":
             return client.get(args["mid"])
+        if name == "box_clone":
+            return client.clone(**args)
         if name == "box_create":
             wait = args.pop("wait_seconds", 0)
             result = client.create(**args)
@@ -283,7 +294,7 @@ def create_server():
                 lambda: dispatch(name, arguments, cancellation), abandon_on_cancel=True
             )
             payload = envelope("guest_exit" if name == "box_exec" else "result", result)
-            failed = name == "box_exec" and exec_exit(result) != 0
+            failed = (name == "box_exec" and exec_exit(result) != 0) or (name == "box_clone" and bool(result.get("error")))
         except anyio.get_cancelled_exc_class():
             cancellation.cancel()
             raise

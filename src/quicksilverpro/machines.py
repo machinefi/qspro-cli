@@ -362,6 +362,36 @@ class MachinesClient:
     def get(self, mid):
         return self.request("GET", "/v1/machines/" + mid_value(mid))
 
+    def clone(self, mid, from_snapshot=None, name=None, count=1, request_id=None, on_request_id=None):
+        if not isinstance(mid, str) or not mid:
+            raise MachineError("invalid_machine", "Choose a source machine ID or name.", 2)
+        if not re.fullmatch(r"[a-f0-9]{12}", mid):
+            matches = [m for m in self.list().get("machines", []) if m.get("name") == mid]
+            if len(matches) != 1:
+                raise MachineError("invalid_machine", "Source name is missing or ambiguous; use its machine ID.", 2)
+            mid = mid_value(matches[0]["id"])
+        if type(count) is not int or not 1 <= count <= 64:
+            raise MachineError("invalid_count", "Count must be 1..64 and within your account limit.", 2)
+        if name is not None and (not isinstance(name, str) or not 1 <= len(name.strip()) <= 64):
+            raise MachineError("invalid_name", "Name must be 1..64 characters.", 2)
+        if from_snapshot is not None and (not isinstance(from_snapshot, str) or not 1 <= len(from_snapshot) <= 80):
+            raise MachineError("invalid_snapshot", "Snapshot must be an ID or name up to 80 characters.", 2)
+        body = {"count": count, "name": name, "from_snapshot": from_snapshot}
+        path = config_dir() / "clone-requests.json"
+        journal = read_json(path)
+        fingerprint = hashlib.sha256((self.origin + hashlib.sha256(self.key.encode()).hexdigest() + mid + json.dumps(body, sort_keys=True)).encode()).hexdigest()
+        request_id = request_id or journal.get(fingerprint, {}).get("request_id") or str(uuid.uuid4())
+        if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", request_id):
+            raise MachineError("invalid_request_id", "Request ID must be 16..64 letters, digits or hyphens.", 2)
+        atomic_write(path, json.dumps({**journal, fingerprint: {"request_id": request_id}}), private=True)
+        if on_request_id:on_request_id(request_id)
+        try:
+            result = self.request("POST", "/v1/machines/" + mid + "/clone", json={**body, "request_id": request_id})
+        except MachineError as error:
+            error.details["request_id"] = request_id
+            raise
+        return {**result, "request_id": request_id}
+
     def create(self, name, size=2, request_id=None, on_request_id=None):
         if not isinstance(name, str) or not 1 <= len(name) <= 64 or size not in (2, 4):
             raise MachineError(

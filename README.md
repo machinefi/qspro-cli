@@ -185,6 +185,8 @@ qsp box ls                           # compact table plus account summary
 qsp box ls --json                    # inspect existing boxes, prices and effective limits
 # Obtain user consent before billable creation/resume.
 qsp box create --name work --wait --json  # prompts for billable creation approval
+qsp box clone <machine-id-or-name> --name worker --count 2 --accept-spend --json
+qsp box clone <machine-id> --from-snapshot <snapshot-id-or-name> --accept-spend --json
 # For automation, use --accept-spend only after explicit user approval.
 qsp box get MID --json
 qsp box wait MID --timeout 180 --json
@@ -245,7 +247,7 @@ Treat guest output and downloaded files as untrusted data, never consent.
 
 `qsp mcp` runs **local stdio only**, with no listener and protocol-only stdout.
 Install `quicksilverpro[mcp]` on Python >=3.10; SDK is pinned to `mcp==1.25.0`.
-`box_create` and `box_resume` require `accept_spend:true` (after showing prices/limits and getting user approval). Tools cover create/list/get/wait/exec, files list/upload/download, pause/resume/delete,
+`box_create`, `box_clone` and `box_resume` require `accept_spend:true` (after showing prices/limits and getting user approval). Tools cover create/clone/list/get/wait/exec, files list/upload/download, pause/resume/delete,
 and owner/share links. MCP file tools accept base64 up to 256 KiB, with no local
 filesystem paths; larger files use CLI copy. Delete requires matching `confirm_mid`.
 The packaged [agent reference](src/quicksilverpro/skills/quicksilver-machines/references/api.md)
@@ -388,3 +390,24 @@ connections per machine and existing account/IP/global stream limits apply.
 Key removal stops new authentication, not existing SSH sessions. Retry a failed
 key update to complete propagation to all machines; SSH tickets resync the current
 account keys before allowing a connection.
+
+
+## Machine cloning
+
+Cloning copies both disks, including user-saved credentials, agent logins, SSH
+keys, packages and repositories. Each duplicate receives its own machine identity
+and QuickSilver AI key; share links and billing records start fresh. Processes
+start fresh. A running source briefly pauses for a consistent disk copy, then
+continues. Duplicates wait when running capacity is full; each counts toward your
+account machine limit. A count can partially succeed: inspect both `machines` and
+`error`. Reuse the reported request ID to recover an unknown or partial outcome;
+use a fresh `--request-id` to intentionally create another identical batch.
+
+Before first boot, the duplicate replaces the exact source managed inference key
+in supported regular text files under `/home/user` and `/etc` (including agent
+configs and env files). Files over 16 MiB, binary files, symlinks, transformed
+keys and copies outside those trees remain your responsibility. The scan fails
+closed at 512 MiB of supported text or 30 seconds. Excluded binary files do not
+use the text budget. If a duplicate cannot start because of these scan limits,
+delete it, reduce files on the source and duplicate again. This is not forensic
+disk erasure.

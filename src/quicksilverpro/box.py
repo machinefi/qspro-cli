@@ -91,7 +91,7 @@ def confirm_spend(client, operation, accept_spend):
     policy = client.list()
     click.echo(
         json.dumps(
-            {k: policy[k] for k in ("prices", "limits", "retention", "trial") if k in policy}
+            {k: policy[k] for k in ("prices", "limits", "limit", "running_limit", "retention", "trial") if k in policy}
         ),
         err=True,
     )
@@ -188,6 +188,23 @@ def create(name, size, request_id, do_wait, timeout, accept_spend, as_json):
                 )
             result = {**client.wait(mid, timeout), "request_id": result["request_id"]}
         emit(result, as_json)
+
+
+@box.command(help="Duplicate a box's disks, including credentials you saved. Each duplicate is billed separately.")
+@click.argument("machine")
+@click.option("--from-snapshot", help="Snapshot ID or exact name; default: current disk.")
+@click.option("--name", help="Name for the duplicate(s).")
+@click.option("--count", type=click.IntRange(1, 64), default=1, show_default=True)
+@click.option("--request-id", help="Reuse after an unknown outcome; a fresh ID creates new duplicates.")
+@click.option("--accept-spend", is_flag=True, help="Approve billable duplication without a prompt.")
+@json_option
+def clone(machine, from_snapshot, name, count, request_id, accept_spend, as_json):
+    with MachinesClient() as client:
+        confirm_spend(client, "creation", accept_spend)
+        result = client.clone(machine, from_snapshot, name, count, request_id,
+            on_request_id=lambda rid: click.echo("Clone request ID: " + rid, err=True))
+        emit(result, as_json)
+        if result.get("error"):click.get_current_context().exit(1)
 
 
 @box.command(help="Wait for a box to become ready.")
